@@ -5,7 +5,13 @@ from core.agent_manager import init_agents
 
 class Orchestrator:
     def __init__(self):
-        self.manager, self.planner = init_agents()
+        self.manager, self.planner, self.react_agent = init_agents()
+
+    async def run_react_loop(self, user_input: str):
+        """
+        Executes the ReAct loop for a given user input.
+        """
+        return await self.react_agent.run(user_input)
 
     async def run_workflow(self, user_input: str):
         """

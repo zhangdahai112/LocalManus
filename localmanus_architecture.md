@@ -66,21 +66,53 @@ LocalManus 利用 AgentScope 的消息传递和编排能力，而非预定义的
 
 ---
 
-## 4. 详细执行管道
+---
 
-### 4.1 从意图到执行
-1.  **请求**：用户输入“分析此 CSV 并绘制图表”。
-2.  **规划**：AgentScope 识别出 `data_analyzer` 技能。
-3.  **VM 准备**：VM 管理器在 Firecracker microVM 中恢复 Python 运行时快照（~5ms）。
-4.  **技能挂载**：`.py` 技能源码和 CSV 文件通过 virtio-blk 设备挂载，或通过 VSOCK 同步。
+## 4. 系统处理链路细节 (以 PDF 转 Word 为例)
 
-### 4.2 执行与自纠正
-1.  **执行者 (虚拟机内)**：运行代码。
-2.  **流传输**：标准输出通过 **VSOCK -> 网关 -> WebSocket** 实时传回前端。
-3.  **错误处理**：如果执行失败（如缺少库），错误信息将反馈给 AgentScope 的规划者。
-4.  **螺旋自纠正**：规划者可决定：
-    - 更新 `requirements.txt` 并触发自动安装。
-    - 选择备选技能。
+为了确保复杂任务的高可靠性，LocalManus 采用三层递进的处理链路。
+
+### 4.1 阶段一：Query 到规划 Agent (意图解析与环境对齐)
+当用户输入 "帮我把这个 `proposal.pdf` 转换成 Word" 时：
+1.  **Context 聚合**：Manager Agent 自动搜集环境元数据：
+    *   **文件系统上下文**：`proposal.pdf` 的路径、大小、读写权限。
+    *   **资源上下文**：当前宿主机的 CPU/内存剩余，是否已拉取相关基础镜像。
+2.  **规划启动**：Planner Agent 接收到格式化的任务元组：
+    *   `Goal`: Convert PDF to DOCX.
+    *   `Constraint`: Local execution only, maintain original layout.
+    *   `Knowledge`: 识别到 PDF 可能包含非搜索文本（需 OCR 判定）。
+
+### 4.2 阶段二：规划 Agent 执行技能路由 (语义映射)
+Planner 不直接操作文件，而是通过 **AgentScope 的工具检索器** 映射技能：
+1.  **技能发现**：在 `SkillRegistry` 中检索符合 `pdf` 和 `word` 标签的模块。
+2.  **逻辑路由决策**：
+    *   如果文件 > 50MB，优先路由至 `system_native_converter`（高性能 C++ 封装）。
+    *   如果文件涉及复杂排版，路由至 `python_layout_analyzer` + `docx_generator` 组合。
+3.  **入参标准化**：生成符合技能 Schema 的 JSON：
+    ```json
+    {
+      "skill": "pdf_convert_core",
+      "params": {
+        "input_path": "/mnt/data/proposal.pdf",
+        "output_format": "docx",
+        "ocr_fallback": true
+      }
+    }
+    ```
+
+### 4.3 阶段三：执行技能与入参 (受控执行)
+1.  **执行环境注入**：VM 管理器通过 **VSOCK** 将入参 Payload 推送到 Firecracker 内部的监控进程。
+2.  **数据挂载**：`proposal.pdf` 所在的目录映射为 VM 内的只读设备，确保安全性。
+3.  **自纠正循环**：
+    *   如果技能返回 `Error: Missing Font`, 规划智能体会捕获此上下文。
+    *   **再次规划**：Planner 决定执行 `font_installer` 技能，或提示用户选择替代方案。
+
+### 4.4 上下文工程 (Context Engineering) 的合理性
+*   **状态保持 (Statefulness)**：系统不仅传递指令，还传递 **World State**。每一步的输出（如提取出的文本结构）都会更新到 Session Memory 中。
+*   **粒度控制**：通过将 "PDF 转 Word" 拆解为 `Analyze -> Extract -> Format -> Verify`，Planner 可以在任何环节拦截并修复异常，而不需要重头开始。
+*   **零泄露上下文**：所有涉及文件路径和敏感信息的上下文仅在 vsock 加密的通道内流动，不会上传至 LLM 的 System Prompt。
+
+---
 
 ---
 

@@ -34,35 +34,43 @@ async def create_task(payload: dict = Body(...)):
     plan = await orchestrator.run_workflow(user_input)
     return plan
 
+@app.post("/api/react")
+async def react_task(payload: dict = Body(...)):
+    """
+    Synchronous endpoint for ReAct loop execution.
+    """
+    user_input = payload.get("input", "")
+    result = await orchestrator.run_react_loop(user_input)
+    return {"result": result}
+
 @app.websocket("/ws/task/{trace_id}")
 async def websocket_task_stream(websocket: WebSocket, trace_id: str):
     await websocket.accept()
     logger.info(f"WebSocket connected for trace_id: {trace_id}")
     try:
         while True:
-            # Placeholder for receiving data from frontend
             data = await websocket.receive_text()
             client_msg = json.loads(data)
             
             if client_msg.get("action") == "start":
-                # Simulated orchestration stream
+                # ... existing logic ...
+                pass
+            
+            elif client_msg.get("action") == "react":
+                user_input = client_msg.get("input", "")
+                
+                # Mocking the ReAct loop progress for UI
                 await websocket.send_text(json.dumps({
-                    "type": "status",
-                    "message": "Manager analyzing intent...",
-                    "agent": "Manager"
+                    "type": "thought",
+                    "content": "I should check the available tools for this request.",
+                    "agent": "ReActAgent"
                 }))
                 
-                # Mock analysis
-                await websocket.send_text(json.dumps({
-                    "type": "status",
-                    "message": "Planner generating DAG...",
-                    "agent": "Planner"
-                }))
-
-                # Mock result
+                result = await orchestrator.run_react_loop(user_input)
+                
                 await websocket.send_text(json.dumps({
                     "type": "result",
-                    "content": "DAG generated successfully. Ready for execution.",
+                    "content": result,
                     "trace_id": trace_id
                 }))
                 
