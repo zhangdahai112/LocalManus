@@ -9,9 +9,9 @@ AGENT_MODEL_CONFIGS = [
     {
         "config_name": "local_model",
         "model_type": "openai_chat",
-        "model_name": os.getenv("MODEL_NAME", "gpt-4"),
-        "api_key": os.getenv("OPENAI_API_KEY", "EMPTY"),
-        "base_url": os.getenv("OPENAI_API_BASE", "http://localhost:11434/v1"),
+        "model_name": os.getenv("MODEL_NAME", "kimi-k2-turbo-preview"),
+        "api_key": os.getenv("OPENAI_API_KEY", "sk-XG0oRiSi37C1HAVGUzMax4ZXf3FgaqbvZe5qz58nSRnyWgxV"),
+        "base_url": os.getenv("OPENAI_API_BASE", "https://api.moonshot.cn"),
     }
 ]
 

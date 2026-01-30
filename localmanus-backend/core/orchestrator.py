@@ -1,11 +1,79 @@
 import json
 import uuid
-from typing import List, Dict
+import asyncio
+import logging
+from typing import List, Dict, Any, AsyncGenerator
 from core.agent_manager import init_agents
+from agentscope.message import Msg
+
+logger = logging.getLogger("LocalManus-Orchestrator")
 
 class Orchestrator:
     def __init__(self):
-        self.manager, self.planner = init_agents()
+        self.manager, self.planner, self.react_agent = init_agents()
+        self.sessions: Dict[str, List[Msg]] = {}
+
+    async def chat_stream(self, session_id: str, user_input: str, user_context: Dict = None) -> AsyncGenerator[str, None]:
+        """
+        Streaming chat with orchestrated ReAct loop and multi-round history.
+        
+        Architecture:
+            - Orchestrator: Session management, SSE formatting, history sync
+            - ReActAgent.run_stream: Full ReAct loop, yields content + internal sync events
+        
+        Internal Protocol:
+            - {'content': str} -> Forward to frontend as SSE
+            - {'_sync': list} -> Sync messages to session history (internal, not sent to frontend)
+            - {'_meta': dict} -> Run metadata for logging (internal, not sent to frontend)
+        """
+        if session_id not in self.sessions:
+            self.sessions[session_id] = []
+        
+        history = self.sessions[session_id]
+        
+        # 1. Check round limit
+        if len(history) >= 40: 
+             yield f"data: {json.dumps({'content': '[Error]: Reached maximum conversation limit.'}, ensure_ascii=False)}\n\n"
+             return
+
+        # 2. Append current user message to global history
+        user_msg = Msg(name="User", content=user_input, role="user")
+        history.append(user_msg)
+        
+        try:
+            # 3. Prepare message list for the LLM
+            sys_prompt = self.react_agent._build_system_prompt(user_context)
+            messages = [{"role": "system", "content": sys_prompt}]
+            
+            # Add all previous history (including current user input)
+            for m in history:
+                messages.append({"role": m.role, "content": m.content}) 
+
+            # 4. Stream ReAct loop - handle internal protocol events
+            async for chunk in self.react_agent.run_stream(messages):
+                # Handle sync event (internal protocol)
+                if "_sync" in chunk:
+                    for m in chunk["_sync"]:
+                        role = m.get("role")
+                        content = m.get("content")
+                        name = "ReActAgent" if role == "assistant" else "System"
+                        history.append(Msg(name=name, content=content, role=role))
+                    continue  # Don't forward to frontend
+                
+                # Handle metadata event (internal protocol)
+                if "_meta" in chunk:
+                    logger.debug(f"ReAct run metadata: {chunk['_meta']}")
+                    continue  # Don't forward to frontend
+                
+                # Forward content chunks to frontend as SSE
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error in orchestrated chat_stream: {str(e)}", exc_info=True)
+            error_msg = f"\n[Error]: {str(e)}"
+            yield f"data: {json.dumps({'content': error_msg}, ensure_ascii=False)}\n\n"
 
     async def run_workflow(self, user_input: str):
         """

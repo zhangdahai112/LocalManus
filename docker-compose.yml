@@ -1,0 +1,15 @@
+services:
+  ui:
+    build:
+      context: ./localmanus-ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    restart: always
+
+# Future services like backend will be added here
+# backend:
+#   build: ./localmanus-backend
+#   ...

@@ -1,0 +1,110 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.box {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 24px;
+    padding: 16px 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.box:focus-within {
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.12);
+    background: white;
+    transform: translateY(-2px);
+}
+
+.topRow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 4px;
+}
+
+.input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 18px;
+    color: #333;
+    background: transparent;
+    font-weight: 500;
+}
+
+.input::placeholder {
+    color: #bbb;
+}
+
+.tabTag {
+    background: #f0f0f0;
+    color: #999;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: lowercase;
+}
+
+.bottomRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 20px;
+}
+
+.leftActions,
+.rightActions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.iconButton {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #666;
+    background: transparent;
+    transition: background 0.2s;
+}
+
+.iconButton:hover {
+    background: #f5f5f5;
+}
+
+.submitButton {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #b0b0b0;
+    /* Match the gray arrow up button in screenshot */
+    transition: background 0.2s;
+}
+
+.submitButton:hover {
+    background: #999;
+}
+
+.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #ccc !important;
+}

@@ -5,3 +5,9 @@ pydantic
 websockets
 python-multipart
 python-dotenv
+duckduckgo-search
+requests
+beautifulsoup4
+python-jose[cryptography]
+passlib[bcrypt]
+sqlmodel

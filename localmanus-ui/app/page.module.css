@@ -1,0 +1,404 @@
+.main {
+  display: flex;
+  height: 100vh;
+  background-color: #fcfcfc;
+  overflow: hidden;
+  position: relative;
+}
+
+.topRightActions {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+}
+
+.content {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 60px 40px; /* More generous padding */
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  scroll-behavior: smooth;
+  position: relative;
+  /* Smooth fade at the top */
+  mask-image: linear-gradient(to bottom, transparent 0%, black 80px, black 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 80px, black 100%);
+}
+
+.chatMode .content {
+  padding: 40px 0 320px 0; /* Increased to 320px to ensure latest messages are not covered by Omnibox */
+}
+
+.container {
+  width: 100%;
+  max-width: 1400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 0 80px; /* Increased side padding */
+  flex: 1;
+  position: relative;
+}
+
+.fixedOmnibox {
+  position: fixed;
+  bottom: 0;
+  left: var(--sidebar-width);
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 40px 80px 50px 80px; /* Generous padding */
+  background: linear-gradient(to top, 
+    #fcfcfc 0%, 
+    #fcfcfc 60%, 
+    rgba(252, 252, 252, 0.9) 80%, 
+    rgba(252, 252, 252, 0) 100%
+  );
+  z-index: 50;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.chatMode .fixedOmnibox {
+  padding-bottom: 30px;
+}
+
+.fixedOmniboxInner {
+  width: 100%;
+  max-width: 800px;
+  pointer-events: auto;
+}
+
+.chatMode .container {
+  max-width: 1100px;
+  height: auto;
+  min-height: 100%;
+  justify-content: flex-start;
+}
+
+.header {
+  margin-bottom: 40px;
+  text-align: center;
+  transition: all 0.5s ease-in-out;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chatMode .header {
+  opacity: 0;
+  transform: translateY(-20px);
+  margin-bottom: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.title {
+  font-size: 40px;
+  font-weight: 500;
+  color: #333;
+  letter-spacing: -0.5px;
+}
+
+.homeContent {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 20px;
+  margin-bottom: 60px;
+  transition: all 0.5s ease;
+}
+
+.homeTabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 40px;
+  max-width: 1000px;
+}
+
+.homeTab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: white;
+  border: 1px solid #eee;
+  border-radius: 20px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.homeTab:hover {
+  background: #f5f5f5;
+  border-color: #e0e0e0;
+  transform: translateY(-1px);
+}
+
+.homeOmnibox {
+  width: 100%;
+  max-width: 800px;
+}
+
+.templates {
+  margin-top: 80px;
+  width: 100%;
+  transition: all 0.5s ease-in-out;
+  opacity: 1;
+}
+
+.chatMode .templates {
+  opacity: 0;
+  pointer-events: none;
+  height: 0;
+  margin-top: 0;
+  overflow: hidden;
+}
+
+.chatInterface {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.5s ease-in-out;
+}
+
+.chatMode .chatInterface {
+  opacity: 1;
+  transform: translateY(0);
+  margin-bottom: 60px; /* Increased bottom margin */
+}
+
+.messageList {
+  display: flex;
+  flex-direction: column;
+  gap: 48px; /* Increased turn separation */
+  padding: 40px 0 100px 0; /* Added bottom padding to lift latest messages */
+}
+
+.message {
+  display: flex;
+  gap: 16px;
+  max-width: 85%;
+}
+
+.userMessage {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.botMessage {
+  align-self: flex-start;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #eee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.messageContent {
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-size: 15px;
+  line-height: 1.6;
+  flex: 1;
+  max-width: 100%;
+  word-break: break-word;
+  margin-bottom: 135px;
+}
+
+.userMessage .messageContent {
+  background: #f0f0f0;
+  color: #333;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.botMessage .messageContent {
+  background: white;
+  color: #333;
+  border: 1px solid #eee;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  border-radius: 18px 18px 18px 4px;
+}
+
+.systemLog {
+  color: #6b7280;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  background-color: #f9fafb;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin: 4px 0;
+  border-left: 2px solid #e5e7eb;
+}
+
+.tabNav {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 8px;
+  margin-bottom: 32px;
+  overflow-x: auto;
+}
+
+.tab {
+  font-size: 15px;
+  color: #666;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 8px 0;
+  position: relative;
+  transition: color 0.2s;
+}
+
+.tab:hover {
+  color: #333;
+}
+
+.activeTab {
+  color: #333;
+  font-weight: 600;
+}
+
+.activeTab::after {
+  content: '';
+  position: absolute;
+  bottom: -9px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: #333;
+}
+
+.sparkle {
+  margin-right: 4px;
+}
+
+.templateGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px;
+  width: 100%;
+}
+
+.templateCard {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.templateCard:hover {
+  transform: translateY(-2px);
+}
+
+.templateThumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: 12px;
+  background: #f5f5f5;
+  border: 1px solid #eeeeee;
+  overflow: hidden;
+  position: relative;
+}
+
+.specialThumb {
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pptIcon {
+  width: 48px;
+  height: 48px;
+  background: #d24726;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 24px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(210, 71, 38, 0.2);
+}
+
+.plusIcon {
+  width: 60px;
+  height: 60px;
+  background: #f0f7ff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.placeholderImg {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #2c3e50 0%, #000000 100%);
+  /* Simulating the dark thumb in screenshot */
+}
+
+/* Specific background variations for variety */
+.templateCard:nth-child(4) .placeholderImg {
+  background: linear-gradient(135deg, #004e92 0%, #000428 100%);
+}
+
+.templateCard:nth-child(7) .placeholderImg {
+  background: linear-gradient(135deg, #74ebd5 0%, #9face6 100%);
+}
+
+.templateInfo {
+  padding: 12px 4px;
+}
+
+.templateName {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.templateMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.usage {
+  font-size: 12px;
+  color: #999;
+}
+
+@media (max-width: 768px) {
+  .content {
+    margin-left: 0;
+    padding: 40px 20px;
+  }
+}
