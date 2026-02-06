@@ -70,7 +70,7 @@ class ReActAgent(ASReActAgent):
             tool_calls = []
             
             # Obtain the stream object by awaiting the model call
-            stream = await self.model(messages, stream=True)
+            stream = await self(messages)
             async for chunk in stream:
                 # 1. Handle content streaming
                 if content := chunk.get("content"):
