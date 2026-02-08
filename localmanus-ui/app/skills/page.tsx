@@ -25,6 +25,8 @@ interface Skill {
 
 import Sidebar from '../components/Sidebar';
 import UserStatus from '../components/UserStatus';
+import { getApiBaseUrl } from '../utils/api';
+import styles from './skills.module.css';
 
 export default function SkillsPage() {
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -41,44 +43,42 @@ export default function SkillsPage() {
     fetchSkills();
   }, []);
 
-  const fetchSkills = async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch('http://localhost:8000/api/skills', {
-        headers: {
-          'Authorization': `Bearer ${token}`
+    const fetchSkills = async () => {
+        try {
+            const token = localStorage.getItem('access_token');
+            const baseUrl = getApiBaseUrl();
+            const response = await fetch(`${baseUrl}/api/skills`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                setSkills(data);
+            }
+        } catch (error) {
+            console.error('Failed to fetch skills:', error);
         }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setSkills(data);
-      }
-    } catch (error) {
-      console.error('Error fetching skills:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
 
-  const toggleSkillStatus = async (skillId: string, enabled: boolean) => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(`http://localhost:8000/api/skills/${skillId}/status`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ enabled })
-      });
-      
-      if (response.ok) {
-        setSkills(skills.map(s => s.id === skillId ? { ...s, enabled } : s));
-      }
-    } catch (error) {
-      console.error('Error toggling skill:', error);
-    }
-  };
+    const toggleSkillStatus = async (skillId: string) => {
+        const token = localStorage.getItem('access_token');
+        const skill = skills.find(s => s.id === skillId);
+        if (!skill) return;
+
+        const baseUrl = getApiBaseUrl();
+        const response = await fetch(`${baseUrl}/api/skills/${skillId}/status`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ enabled: !skill.enabled })
+        });
+
+        if (response.ok) {
+            fetchSkills();
+        }
+    };
 
   const filteredSkills = skills.filter(skill =>
     skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||

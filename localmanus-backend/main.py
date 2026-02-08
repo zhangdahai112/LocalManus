@@ -1,10 +1,15 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Request, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from core.orchestrator import Orchestrator
 from core.database import create_db_and_tables, get_session
-from core.models import User, UserCreate, UserRead, Token, UploadedFile, FileRead
+from core.models import (
+    User, UserCreate, UserRead, Token, 
+    UploadedFile, FileRead,
+    Project, ProjectCreate, ProjectUpdate, ProjectRead
+)
 from core.auth import authenticate_user, create_access_token, get_password_hash, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 from core.skill_registry import SkillRegistry
 from core.agent_manager import agent_lifecycle, init_agents
@@ -16,7 +21,7 @@ import uuid
 import asyncio
 import os
 import shutil
-from datetime import timedelta
+from datetime import timedelta, datetime
 from dotenv import load_dotenv
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -56,6 +61,15 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint for Docker healthcheck"""
+    return {
+        "status": "healthy",
+        "service": "localmanus-backend",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 @app.post("/api/register", response_model=UserRead)
 async def register(user: UserCreate, session: Session = Depends(get_session)):
@@ -269,6 +283,111 @@ async def update_settings(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to persist configuration")
     return {"message": "Configuration updated successfully"}
+
+# Project Management Endpoints
+
+@app.get("/api/projects", response_model=List[ProjectRead])
+async def list_projects(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get all projects for the current user."""
+    projects = session.exec(
+        select(Project).where(Project.user_id == current_user.id)
+    ).all()
+    return projects
+
+@app.post("/api/projects", response_model=ProjectRead)
+async def create_project(
+    project: ProjectCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Create a new project for the current user."""
+    db_project = Project(
+        user_id=current_user.id,
+        name=project.name,
+        description=project.description,
+        color=project.color or "#3b82f6",
+        icon=project.icon or "Folder"
+    )
+    session.add(db_project)
+    session.commit()
+    session.refresh(db_project)
+    return db_project
+
+@app.get("/api/projects/{project_id}", response_model=ProjectRead)
+async def get_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get a specific project by ID."""
+    project = session.exec(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+@app.put("/api/projects/{project_id}", response_model=ProjectRead)
+async def update_project(
+    project_id: int,
+    project_update: ProjectUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Update a project."""
+    project = session.exec(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Update fields
+    if project_update.name is not None:
+        project.name = project_update.name
+    if project_update.description is not None:
+        project.description = project_update.description
+    if project_update.color is not None:
+        project.color = project_update.color
+    if project_update.icon is not None:
+        project.icon = project_update.icon
+    
+    project.updated_at = datetime.utcnow()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Delete a project."""
+    project = session.exec(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    session.delete(project)
+    session.commit()
+    return {"message": "Project deleted successfully"}
 
 @app.get("/api/chat")
 async def chat_sse(

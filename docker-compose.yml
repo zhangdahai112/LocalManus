@@ -1,15 +1,65 @@
 services:
+  # Backend service
+  backend:
+    build:
+      context: ./localmanus-backend
+      dockerfile: Dockerfile
+    container_name: localmanus-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_NAME=${MODEL_NAME:-gpt-4}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE=${OPENAI_API_BASE:-http://localhost:11434/v1}
+      - AGENT_MEMORY_LIMIT=${AGENT_MEMORY_LIMIT:-40}
+      - UPLOAD_SIZE_LIMIT=${UPLOAD_SIZE_LIMIT:-10485760}
+      - DATABASE_URL=sqlite:///./db/localmanus.db
+    volumes:
+      # Persistent database storage
+      - ./data/db:/app/db
+      # Persistent file uploads
+      - ./data/uploads:/app/uploads
+      # Mount .env for configuration (optional)
+      - ./localmanus-backend/.env:/app/.env:ro
+    restart: unless-stopped
+    networks:
+      - localmanus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend service
   ui:
     build:
       context: ./localmanus-ui
       dockerfile: Dockerfile
+    container_name: localmanus-ui
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-    restart: always
+      # Browser context: accessible via host machine
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      # SSR context: accessible via Docker internal network
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - localmanus-network
 
-# Future services like backend will be added here
-# backend:
-#   build: ./localmanus-backend
-#   ...
+# Define named volumes for data persistence
+volumes:
+  db_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+# Define network for service communication
+networks:
+  localmanus-network:
+    driver: bridge

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus, Mic, Share2, ArrowUp, Zap, Paperclip, X } from 'lucide-react';
 import styles from './omnibox.module.css';
+import { getApiBaseUrl } from '../utils/api';
 
 interface OmniboxProps {
     onOpenChat?: (text: string, filePaths?: string[]) => void;
@@ -42,7 +43,8 @@ export default function Omnibox({ onOpenChat, disabled, uploadedFiles: externalU
                 const formData = new FormData();
                 formData.append('file', file);
 
-                const response = await fetch('http://localhost:8000/api/upload', {
+                const baseUrl = getApiBaseUrl();
+                const response = await fetch(`${baseUrl}/api/upload`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,

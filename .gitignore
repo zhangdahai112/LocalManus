@@ -66,3 +66,9 @@ Thumbs.db
 /localmanus-backend/runs/
 localmanus-backend/localmanus.db
 localmanus-backend/uploads
+
+# Docker persistent data
+data/
+*.db
+*.sqlite
+*.sqlite3

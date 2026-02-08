@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Users, Calendar, Bell, Plus, Share2, LogIn, User } from 'lucide-react';
 import styles from './userStatus.module.css';
+import { getApiBaseUrl } from '../utils/api';
 
 interface User {
   id: number;
@@ -34,7 +35,8 @@ export default function UserStatus() {
 
   const fetchCurrentUser = async (token: string) => {
     try {
-      const response = await fetch('http://localhost:8000/api/me', {
+      const baseUrl = getApiBaseUrl();
+      const response = await fetch(`${baseUrl}/api/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -59,7 +61,8 @@ export default function UserStatus() {
       formData.append('username', loginForm.username);
       formData.append('password', loginForm.password);
       
-      const response = await fetch('http://localhost:8000/api/login', {
+      const baseUrl = getApiBaseUrl();
+      const response = await fetch(`${baseUrl}/api/login`, {
         method: 'POST',
         body: formData
       });
@@ -89,7 +92,8 @@ export default function UserStatus() {
     }
     
     try {
-      const response = await fetch('http://localhost:8000/api/register', {
+      const baseUrl = getApiBaseUrl();
+      const response = await fetch(`${baseUrl}/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

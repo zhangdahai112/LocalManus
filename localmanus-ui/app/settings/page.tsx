@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Save, Cpu, Globe, Lock, ShieldCheck, Database } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import UserStatus from '../components/UserStatus';
+import { getApiBaseUrl } from '../utils/api';
 import styles from './settings.module.css';
 
 export default function SettingsPage() {
@@ -16,37 +16,37 @@ export default function SettingsPage() {
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
+    const [message, setMessage] = useState('');
 
     useEffect(() => {
-        fetchSettings();
+        loadSettings();
     }, []);
 
-    const fetchSettings = async () => {
+    const loadSettings = async () => {
         try {
             const token = localStorage.getItem('access_token');
-            const response = await fetch('http://localhost:8000/api/settings', {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+            const baseUrl = getApiBaseUrl();
+            const response = await fetch(`${baseUrl}/api/settings`, {
+                headers: { 'Authorization': `Bearer ${token}` }
             });
+            
             if (response.ok) {
                 const data = await response.json();
                 setConfig(data);
             }
         } catch (error) {
-            console.error('Error fetching settings:', error);
-        } finally {
-            setLoading(false);
+            console.error('Failed to load settings:', error);
         }
     };
 
     const handleSave = async () => {
         setSaving(true);
-        setMessage(null);
+        setMessage('');
+        
         try {
             const token = localStorage.getItem('access_token');
-            const response = await fetch('http://localhost:8000/api/settings', {
+            const baseUrl = getApiBaseUrl();
+            const response = await fetch(`${baseUrl}/api/settings`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -56,14 +56,14 @@ export default function SettingsPage() {
             });
             
             if (response.ok) {
-                setMessage({ text: '配置已成功保存并生效', type: 'success' });
-                // Re-fetch to get masked keys correctly
-                fetchSettings();
+                setMessage('设置已保存');
+                setTimeout(() => setMessage(''), 3000);
             } else {
-                setMessage({ text: '保存失败，请检查后端日志', type: 'error' });
+                setMessage('保存失败');
             }
         } catch (error) {
-            setMessage({ text: '网络错误，无法保存配置', type: 'error' });
+            console.error('Failed to save settings:', error);
+            setMessage('保存失败');
         } finally {
             setSaving(false);
         }

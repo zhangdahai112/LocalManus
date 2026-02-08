@@ -6,6 +6,7 @@ import Omnibox from './components/Omnibox';
 import Toolbox from './components/Toolbox';
 import UserStatus from './components/UserStatus';
 import MarkdownRenderer from './components/MarkdownRenderer';
+import { getApiBaseUrl } from './utils/api';
 import { Plus, User, Bot, Wrench, Search, Eye, Zap, FileText, Palette, BookOpen, BarChart3, Globe, Languages, PlayCircle, Mic } from 'lucide-react';
 import styles from './page.module.css';
 
@@ -65,8 +66,9 @@ export default function Home() {
 
       const token = localStorage.getItem('access_token');
       
+      const baseUrl = getApiBaseUrl();
       // Build URL with file paths if provided
-      let url = `http://localhost:8000/api/chat?input=${encodeURIComponent(text)}&session_id=${sessionId}`;
+      let url = `${baseUrl}/api/chat?input=${encodeURIComponent(text)}&session_id=${sessionId}`;
       if (filePaths && filePaths.length > 0) {
         const filePathsParam = filePaths.join(',');
         console.log('File paths parameter:', filePathsParam);

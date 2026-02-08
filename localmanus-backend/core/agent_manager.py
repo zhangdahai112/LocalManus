@@ -6,18 +6,22 @@ from agentscope.memory import InMemoryMemory
 from agents.base_agents import ManagerAgent, PlannerAgent
 from agents.react_agent import ReActAgent
 from core.skill_manager import SkillManager
+from core.config import AGENT_MODEL_CONFIGS
 
 class AgentLifecycleManager:
     def __init__(self):
         # Initialize AgentScope
         agentscope.init()
        
-        # Instantiate model directly for AgentScope 1.0
+        # Get model configuration from AGENT_MODEL_CONFIGS
+        model_config = AGENT_MODEL_CONFIGS[0] if AGENT_MODEL_CONFIGS else {}
+        
+        # Instantiate model using config (with env var fallbacks)
         self.model = OpenAIChatModel(
-            model_name=os.getenv("MODEL_NAME", "gpt-4"),
-            api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
+            model_name=model_config.get("model_name", os.getenv("MODEL_NAME", "gpt-4")),
+            api_key=model_config.get("api_key", os.getenv("OPENAI_API_KEY", "EMPTY")),
             streaming=True,
-            client_kwargs={"base_url": os.getenv("OPENAI_API_BASE", "http://localhost:11434/v1")},
+            client_kwargs={"base_url": model_config.get("base_url", os.getenv("OPENAI_API_BASE", "http://localhost:11434/v1"))},
         )
         
         # Instantiate formatters and memory for AgentScope 1.0
