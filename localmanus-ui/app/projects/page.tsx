@@ -67,7 +67,8 @@ export default function ProjectsPage() {
     setShowModal(true);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: number, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!confirm('确定要删除这个项目吗？')) return;
     
     const token = localStorage.getItem('access_token');
