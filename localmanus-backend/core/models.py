@@ -25,3 +25,22 @@ class Token(SQLModel):
 
 class TokenData(SQLModel):
     username: Optional[str] = None
+
+class UploadedFile(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id")
+    filename: str
+    original_filename: str
+    file_path: str
+    file_size: int
+    mime_type: Optional[str] = None
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+
+class FileRead(SQLModel):
+    id: int
+    filename: str
+    original_filename: str
+    file_path: str
+    file_size: int
+    mime_type: Optional[str] = None
+    uploaded_at: datetime

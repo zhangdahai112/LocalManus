@@ -65,3 +65,4 @@ Thumbs.db
 /localmanus-backend/logs/
 /localmanus-backend/runs/
 localmanus-backend/localmanus.db
+localmanus-backend/uploads

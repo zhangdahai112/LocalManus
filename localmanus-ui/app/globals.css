@@ -1,3 +1,9 @@
+/* Import highlight.js theme for code syntax highlighting */
+/* Import highlight.js theme for code syntax highlighting */
+@import 'highlight.js/styles/github.css';
+/* You can switch to dark theme if needed */
+/* @import 'highlight.js/styles/github-dark.css'; */
+
 :root {
   --background: #ffffff;
   --foreground: #1a1a1a;

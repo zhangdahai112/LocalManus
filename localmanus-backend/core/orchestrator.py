@@ -13,7 +13,7 @@ class Orchestrator:
         self.manager, self.planner, self.react_agent = init_agents()
         self.sessions: Dict[str, List[Msg]] = {}
 
-    async def chat_stream(self, session_id: str, user_input: str, user_context: Dict = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, session_id: str, user_input: str, user_context: Dict = None, file_paths: List[str] = None) -> AsyncGenerator[str, None]:
         """
         Streaming chat with orchestrated ReAct loop and multi-round history.
         
@@ -52,8 +52,17 @@ class Orchestrator:
                     # Already a Msg object
                     msg_history.append(m)
             
-            # Build system prompt
+            # Build system prompt with file paths context
             sys_prompt = self.react_agent._build_system_prompt(user_context)
+            
+            # Add file paths information if provided
+            if file_paths:
+                file_context = "\n\n**User's Uploaded Files:**\n"
+                for file_path in file_paths:
+                    file_context += f"- {file_path}\n"
+                file_context += "\nYou can use 'read_user_file' tool to read these files. Extract the filename from the path."
+                sys_prompt += file_context
+            
             system_msg = Msg(name="System", content=sys_prompt, role="system")
             
             # Combine system message with history

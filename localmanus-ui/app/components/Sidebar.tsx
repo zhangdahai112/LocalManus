@@ -10,12 +10,16 @@ import {
     Plus
 } from 'lucide-react';
 import styles from './sidebar.module.css';
+import { useRouter, usePathname } from 'next/navigation';
 
 interface SidebarProps {
     onNewChat?: () => void;
 }
 
 export default function Sidebar({ onNewChat }: SidebarProps) {
+    const router = useRouter();
+    const pathname = usePathname();
+    
     const recentActivities = [
         { name: '商业计划书.docx', status: 'completed' },
         { name: '分析报告.pdf', status: 'processing' },
@@ -31,15 +35,24 @@ export default function Sidebar({ onNewChat }: SidebarProps) {
                 </div>
 
                 <nav className={styles.nav}>
-                    <div className={`${styles.navItem} ${styles.active}`}>
+                    <div 
+                        className={`${styles.navItem} ${pathname === '/' ? styles.active : ''}`}
+                        onClick={() => router.push('/')}
+                    >
                         <Home size={18} />
                         <span>主页</span>
                     </div>
-                    <div className={styles.navItem}>
+                    <div 
+                        className={`${styles.navItem} ${pathname === '/skills' ? styles.active : ''}`}
+                        onClick={() => router.push('/skills')}
+                    >
                         <LayoutGrid size={18} />
                         <span>技能库</span>
                     </div>
-                    <div className={styles.navItem}>
+                    <div 
+                        className={`${styles.navItem} ${pathname === '/settings' ? styles.active : ''}`}
+                        onClick={() => router.push('/settings')}
+                    >
                         <Settings size={18} />
                         <span>设置</span>
                     </div>

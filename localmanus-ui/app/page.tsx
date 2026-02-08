@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar';
 import Omnibox from './components/Omnibox';
 import Toolbox from './components/Toolbox';
 import UserStatus from './components/UserStatus';
+import MarkdownRenderer from './components/MarkdownRenderer';
 import { Plus, User, Bot, Wrench, Search, Eye, Zap, FileText, Palette, BookOpen, BarChart3, Globe, Languages, PlayCircle, Mic } from 'lucide-react';
 import styles from './page.module.css';
 
@@ -20,6 +21,7 @@ export default function Home() {
   }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState(() => Math.random().toString(36).substring(7));
+  const [uploadedFiles, setUploadedFiles] = useState<Array<{id: number, filename: string, file_path: string, original_filename: string}>>([]);
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,23 +38,46 @@ export default function Home() {
     }
   }, [messages]);
 
-  const handleSendMessage = async (text: string) => {
-    if (!text.trim() || isLoading) return;
+  const handleSendMessage = async (text: string, filePaths?: string[]) => {
+    if ((!text.trim() && !filePaths?.length) || isLoading) return;
 
     if (!isChatMode) {
       setIsChatMode(true);
     }
 
-    const newUserMessage = { role: 'user' as const, content: text };
+    // Build user message content
+    let userContent = text;
+    if (filePaths && filePaths.length > 0) {
+      const filePathsText = filePaths.map(p => `[文件: ${p}]`).join('\n');
+      userContent = filePathsText + (text ? '\n\n' + text : '');
+    }
+
+    const newUserMessage = { role: 'user' as const, content: userContent };
     setMessages(prev => [...prev, newUserMessage]);
     setIsLoading(true);
+
+    // Log for debugging
+    console.log('handleSendMessage called with filePaths:', filePaths);
 
     try {
       // Add initial bot message for streaming
       setMessages(prev => [...prev, { role: 'bot', content: '', thought: '', observation: '' }]);
 
       const token = localStorage.getItem('access_token');
-      const response = await fetch(`http://localhost:8000/api/chat?input=${encodeURIComponent(text)}&session_id=${sessionId}${token ? `&access_token=${token}` : ''}`);
+      
+      // Build URL with file paths if provided
+      let url = `http://localhost:8000/api/chat?input=${encodeURIComponent(text)}&session_id=${sessionId}`;
+      if (filePaths && filePaths.length > 0) {
+        const filePathsParam = filePaths.join(',');
+        console.log('File paths parameter:', filePathsParam);
+        url += `&file_paths=${encodeURIComponent(filePathsParam)}`;
+      }
+      if (token) {
+        url += `&access_token=${token}`;
+      }
+      
+      console.log('Request URL:', url);
+      const response = await fetch(url);
       
       if (!response.ok) {
         throw new Error('Network response was not ok');
@@ -101,6 +126,9 @@ export default function Home() {
           }
         }
       }
+      
+      // Clear uploaded files after successful send
+      setUploadedFiles([]);
     } catch (error) {
       console.error('Error fetching chat:', error);
       setMessages(prev => [...prev, { role: 'bot', content: '抱歉，发生了错误。请稍后再试。' }]);
@@ -113,6 +141,7 @@ export default function Home() {
     setMessages([]);
     setIsChatMode(false);
     setSessionId(Math.random().toString(36).substring(7));
+    setUploadedFiles([]); // Clear uploaded files when starting new chat
   };
 
   const tabs = ['全部模板', '创意与设计', '通用', '营销增长', '产品调研', '市场推广', '学习与成长', '求职发展', '我的模板'];
@@ -159,7 +188,12 @@ export default function Home() {
                 <div className={styles.homeTab}><Mic size={16} color="#14b8a6" /> 撰写音频</div>
               </nav>
               <div className={styles.homeOmnibox}>
-                <Omnibox onOpenChat={handleSendMessage} disabled={isLoading} />
+                <Omnibox 
+                  onOpenChat={handleSendMessage} 
+                  disabled={isLoading}
+                  uploadedFiles={uploadedFiles}
+                  onUploadedFilesChange={setUploadedFiles}
+                />
               </div>
             </div>
           )}
@@ -173,11 +207,15 @@ export default function Home() {
                       {msg.role === 'user' ? <User size={18} /> : <Bot size={18} />}
                     </div>
                     <div className={styles.messageContent}>
-                      {msg.content && msg.content.split('\n').map((line, j) => (
-                        <div key={j} className={line.startsWith('[Tool Use]') || line.startsWith('[Observation]') || line.startsWith('[Error]') ? styles.systemLog : ''}>
-                          {line}
-                        </div>
-                      ))}
+                      {msg.role === 'bot' ? (
+                        <MarkdownRenderer content={msg.content || ''} />
+                      ) : (
+                        msg.content && msg.content.split('\n').map((line, j) => (
+                          <div key={j} className={line.startsWith('[Tool Use]') || line.startsWith('[Observation]') || line.startsWith('[Error]') ? styles.systemLog : ''}>
+                            {line}
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 ))}
@@ -188,7 +226,12 @@ export default function Home() {
           {isChatMode && (
             <div className={styles.fixedOmnibox}>
               <div className={styles.fixedOmniboxInner}>
-                <Omnibox onOpenChat={handleSendMessage} disabled={isLoading} />
+                <Omnibox 
+                  onOpenChat={handleSendMessage} 
+                  disabled={isLoading}
+                  uploadedFiles={uploadedFiles}
+                  onUploadedFilesChange={setUploadedFiles}
+                />
               </div>
             </div>
           )}
