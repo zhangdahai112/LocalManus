@@ -3,6 +3,10 @@ Simple database seeding script that bypasses passlib issues.
 """
 import os
 import sys
+
+# Add the parent directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from sqlmodel import Session, select
 from core.database import engine, create_db_and_tables
 from core.models import User

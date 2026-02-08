@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 from core.skill_manager import BaseSkill
 from typing import List, Dict
+from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
 
 
 class WebSearchSkill(BaseSkill):
@@ -15,7 +17,7 @@ class WebSearchSkill(BaseSkill):
         self.name = "web_search"
         self.description = "Skill for web-related operations like searching and scraping."
 
-    def search_web(self, query: str, max_results: int = 5) -> str:
+    def search_web(self, query: str, max_results: int = 5) -> ToolResponse:
         """
         Searches the web using DuckDuckGo and returns results.
 
@@ -24,18 +26,20 @@ class WebSearchSkill(BaseSkill):
             max_results (int): Maximum number of results to return (default: 5)
 
         Returns:
-            str: Formatted search results or error message
+            ToolResponse: Formatted search results or error message
         """
         try:
             results = []
             with DDGS() as ddgs:
                 for r in ddgs.text(query, max_results=max_results):
                     results.append(f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}\n")
-            return "\n".join(results) if results else "No results found."
+            content = "\n".join(results) if results else "No results found."
+            return ToolResponse(content=[TextBlock(type="text", text=content)])
         except Exception as e:
-            return f"Error during search: {str(e)}"
+            error_msg = f"Error during search: {str(e)}"
+            return ToolResponse(content=[TextBlock(type="text", text=error_msg)])
 
-    def scrape_web(self, url: str) -> str:
+    def scrape_web(self, url: str) -> ToolResponse:
         """
         Fetches the content of a webpage and returns the text.
 
@@ -43,7 +47,7 @@ class WebSearchSkill(BaseSkill):
             url (str): The URL to scrape
 
         Returns:
-            str: Scraped text content or error message
+            ToolResponse: Scraped text content or error message
         """
         try:
             headers = {
@@ -65,9 +69,10 @@ class WebSearchSkill(BaseSkill):
             chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
             text = '\n'.join(chunk for chunk in chunks if chunk)
             
-            return text[:5000]  # Limit to 5000 characters
+            return ToolResponse(content=[TextBlock(type="text", text=text[:5000])])  # Limit to 5000 characters
         except Exception as e:
-            return f"Error scraping {url}: {str(e)}"
+            error_msg = f"Error scraping {url}: {str(e)}"
+            return ToolResponse(content=[TextBlock(type="text", text=error_msg)])
 
 
 class WebTools(BaseSkill):
@@ -80,7 +85,7 @@ class WebTools(BaseSkill):
         super().__init__()
         self.web_search_skill = WebSearchSkill()
 
-    def search(self, query: str, max_results: int = 5) -> str:
+    def search(self, query: str, max_results: int = 5) -> ToolResponse:
         """
         Searches the web using DuckDuckGo and returns results.
         
@@ -89,11 +94,11 @@ class WebTools(BaseSkill):
             max_results (int): Maximum number of results to return (default: 5)
         
         Returns:
-            str: Formatted search results or error message
+            ToolResponse: Formatted search results or error message
         """
         return self.web_search_skill.search_web(query, max_results)
 
-    def scrape(self, url: str) -> str:
+    def scrape(self, url: str) -> ToolResponse:
         """
         Fetches the content of a webpage and returns the text.
         
@@ -101,6 +106,6 @@ class WebTools(BaseSkill):
             url (str): The URL to scrape
         
         Returns:
-            str: Scraped text content or error message
+            ToolResponse: Scraped text content or error message
         """
         return self.web_search_skill.scrape_web(url)

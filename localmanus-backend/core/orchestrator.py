@@ -42,12 +42,22 @@ class Orchestrator:
         
         try:
             # 3. Prepare message list for the LLM
-            sys_prompt = self.react_agent._build_system_prompt(user_context)
-            messages = [{"role": "system", "content": sys_prompt}]
-            
-            # Add all previous history (including current user input)
+            # Convert history to Msg objects if needed
+            msg_history = []
             for m in history:
-                messages.append({"role": m.role, "content": m.content}) 
+                if isinstance(m, dict):
+                    # Convert dict to Msg object
+                    msg_history.append(Msg(name=m.get("name", "Unknown"), content=m["content"], role=m["role"]))
+                else:
+                    # Already a Msg object
+                    msg_history.append(m)
+            
+            # Build system prompt
+            sys_prompt = self.react_agent._build_system_prompt(user_context)
+            system_msg = Msg(name="System", content=sys_prompt, role="system")
+            
+            # Combine system message with history
+            messages = [system_msg] + msg_history 
 
             # 4. Stream ReAct loop - handle internal protocol events
             async for chunk in self.react_agent.run_stream(messages):

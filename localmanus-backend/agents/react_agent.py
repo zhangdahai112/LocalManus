@@ -27,8 +27,7 @@ class ReActAgent(ASReActAgent):
             sys_prompt="",  # Will be set dynamically for each conversation
             model=model,
             formatter=formatter,
-            toolkit=skill_manager.toolkit,
-            max_iters=10  # Maximum ReAct iterations
+            toolkit=skill_manager.toolkit
         )
         self.skill_manager = skill_manager
         self.original_model = model  # Keep reference for streaming if needed
@@ -66,31 +65,48 @@ class ReActAgent(ASReActAgent):
         new_messages = []  # Track messages added during this run
         
         try:
-            full_response = ""
-            tool_calls = []
+            # Call the ReAct agent which returns a Msg object (not a stream)
+            reply_msg = await self(messages)
             
-            # Obtain the stream object by awaiting the model call
-            stream = await self(messages)
-            async for chunk in stream:
-                # 1. Handle content streaming
-                if content := chunk.get("content"):
-                    content_str = ""
-                    if isinstance(content, list):
-                        content_str = "".join([
-                            b.get("text", b.text if hasattr(b, "text") else str(b)) 
-                            if isinstance(b, (dict, object)) else str(b) 
-                            for b in content
-                        ])
-                    else:
-                        content_str = str(content)
-                    
-                    content_str = content_str[len(full_response):]
-                    full_response += content_str
-                    yield {"content": content_str}
-                
-                # 2. Accumulate tool calls
-                if tc := chunk.get("tool_calls"):
-                    tool_calls.extend(tc)
+            # Extract content from the reply message
+            full_response = ""
+            if hasattr(reply_msg, 'content'):
+                if isinstance(reply_msg.content, list):
+                    # Handle list of content blocks
+                    content_blocks = []
+                    for block in reply_msg.content:
+                        if hasattr(block, 'text'):
+                            content_blocks.append(block.text)
+                        elif isinstance(block, dict) and 'text' in block:
+                            content_blocks.append(block['text'])
+                        else:
+                            content_blocks.append(str(block))
+                    full_response = "".join(content_blocks)
+                else:
+                    full_response = str(reply_msg.content)
+            
+            # Stream the response character by character for SSE
+            for char in full_response:
+                yield {"content": char}
+                # Small delay to simulate streaming (optional)
+                # await asyncio.sleep(0.01)
+            
+            # Extract tool calls if any
+            tool_calls = []
+            if hasattr(reply_msg, 'content') and isinstance(reply_msg.content, list):
+                for block in reply_msg.content:
+                    if hasattr(block, 'type') and block.type == 'tool_use':
+                        tool_calls.append({
+                            'function': {
+                                'name': getattr(block, 'name', 'unknown')
+                            }
+                        })
+                    elif isinstance(block, dict) and block.get('type') == 'tool_use':
+                        tool_calls.append({
+                            'function': {
+                                'name': block.get('name', 'unknown')
+                            }
+                        })
             
             # Record assistant response in context
             if full_response:
@@ -149,5 +165,7 @@ class ReActAgent(ASReActAgent):
         """
         Alternative method name for compatibility with existing code.
         """
-        async for chunk in self.run_stream(user_input, user_context=user_context):
+        # Convert user input to messages format expected by run_stream
+        messages = [{"role": "user", "content": user_input}]
+        async for chunk in self.run_stream(messages):
             yield chunk
