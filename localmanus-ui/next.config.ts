@@ -27,18 +27,8 @@ const nextConfig: NextConfig = {
     },
   },
 
-  /* Webpack configuration for handling modules */
-  webpack: (config, { isServer }) => {
-    // Fix for module not found errors
-    config.resolve.fallback = {
-      ...config.resolve.fallback,
-      fs: false,
-      net: false,
-      tls: false,
-    };
-    
-    return config;
-  },
+  /* Turbopack configuration (Next.js 16+) */
+  turbopack: {},
 };
 
 export default nextConfig;
