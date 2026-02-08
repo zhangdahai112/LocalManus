@@ -4,9 +4,11 @@ const nextConfig: NextConfig = {
   /* Environment variables */
   env: {
     // Public API URL for client-side fetches (browser context)
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://47.121.183.184:1243',
+    // Defaults to localhost for local development
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
     // Internal API URL for SSR (server context)
-    BACKEND_URL: process.env.BACKEND_URL || 'http://47.121.183.184:1243',
+    // Defaults to localhost for local development
+    BACKEND_URL: process.env.BACKEND_URL || 'http://localhost:8000',
   },
 
   /* Production optimization */
@@ -23,7 +25,7 @@ const nextConfig: NextConfig = {
   /* Experimental features */
   experimental: {
     serverActions: {
-      allowedOrigins: ['47.121.183.184:1243', 'localhost:3000'],
+      allowedOrigins: ['47.121.183.184:1243', 'localhost:3000', 'localhost:8000'],
     },
   },
 

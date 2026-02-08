@@ -4,8 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:local": "next dev --port 3000",
     "build": "next build",
+    "build:prod": "rm -rf .next && next build",
     "start": "next start",
+    "start:prod": "next start --port 3000",
     "lint": "eslint"
   },
   "dependencies": {

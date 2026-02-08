@@ -1,6 +1,8 @@
 from core.skill_manager import BaseSkill
 from core.firecracker_sandbox import firecracker_manager
 from typing import Dict, Any
+from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
 
 class GenWebSkill(BaseSkill):
     """
@@ -8,7 +10,7 @@ class GenWebSkill(BaseSkill):
     Each user gets an isolated, high-performance VM environment.
     """
     
-    async def create_fullstack_project(self, project_name: str, tech_stack: str, user_id: str) -> str:
+    async def create_fullstack_project(self, project_name: str, tech_stack: str, user_id: str) -> ToolResponse:
         """
         Generates a full-stack project inside a Firecracker MicroVM.
         
@@ -18,13 +20,14 @@ class GenWebSkill(BaseSkill):
             user_id (str): The ID of the user (injected by system).
             
         Returns:
-            str: Summary of the generated project and VNC connection info.
+            ToolResponse: Summary of the generated project and VNC connection info.
         """
         # 1. Start/Get the Firecracker VM for the user
         try:
             vm = firecracker_manager.start_vm(user_id)
         except Exception as e:
-            return f"Failed to initialize Firecracker Sandbox: {str(e)}"
+            error_msg = f"Failed to initialize Firecracker Sandbox: {str(e)}"
+            return ToolResponse(content=[TextBlock(type="text", text=error_msg)])
             
         # 2. Execute generation commands inside the VM
         # In a real setup, we'd use a guest agent via VSOCK.
@@ -36,14 +39,15 @@ class GenWebSkill(BaseSkill):
         
         for cmd in commands:
             firecracker_manager.execute_in_vm(user_id, cmd)
-            
-        return (
+        
+        content = (
             f"Successfully generated project '{project_name}' in a Firecracker MicroVM.\n"
             f"VNC Visual Stream: available at port {vm.vnc_proxy_port}\n"
             f"VM Internal IP: {vm.ip_address}"
         )
+        return ToolResponse(content=[TextBlock(type="text", text=content)])
 
-    async def run_shell_command(self, command: str, user_id: str) -> str:
+    async def run_shell_command(self, command: str, user_id: str) -> ToolResponse:
         """
         Runs a shell command inside the user's Firecracker VM.
         
@@ -52,7 +56,8 @@ class GenWebSkill(BaseSkill):
             user_id (str): The ID of the user.
             
         Returns:
-            str: Command output.
+            ToolResponse: Command output.
         """
         result = firecracker_manager.execute_in_vm(user_id, command)
-        return result["stdout"] if result["exit_code"] == 0 else f"Error: {result['stderr']}"
+        content = result["stdout"] if result["exit_code"] == 0 else f"Error: {result['stderr']}"
+        return ToolResponse(content=[TextBlock(type="text", text=content)])

@@ -1,5 +1,5 @@
 from core.skill_manager import BaseSkill
-from agentscope.tool import execute_python_code, execute_shell_command
+from agentscope.tool import execute_python_code, execute_shell_command, ToolResponse
 import asyncio
 
 
@@ -13,7 +13,7 @@ class SystemExecutionSkill(BaseSkill):
         self.name = "system_execution"
         self.description = "Skill for system operations including code execution and shell commands."
 
-    async def python_execute(self, code: str) -> str:
+    async def python_execute(self, code: str) -> ToolResponse:
         """
         Executes Python code and returns the output. 
         Note: You must use 'print()' to see output.
@@ -22,12 +22,12 @@ class SystemExecutionSkill(BaseSkill):
             code (str): The Python code to execute
 
         Returns:
-            str: Output of the executed code or error message
+            ToolResponse: Output of the executed code or error message
         """
         response = await execute_python_code(code)
-        return response.content
+        return response
 
-    async def shell_execute(self, command: str) -> str:
+    async def shell_execute(self, command: str) -> ToolResponse:
         """
         Executes a shell command and returns the result.
 
@@ -35,10 +35,10 @@ class SystemExecutionSkill(BaseSkill):
             command (str): The shell command to execute
 
         Returns:
-            str: Result of the executed command or error message
+            ToolResponse: Result of the executed command or error message
         """
         response = await execute_shell_command(command)
-        return response.content
+        return response
 
 
 class SystemTools(BaseSkill):
@@ -51,7 +51,7 @@ class SystemTools(BaseSkill):
         super().__init__()
         self.system_execution_skill = SystemExecutionSkill()
 
-    async def run_python(self, code: str) -> str:
+    async def run_python(self, code: str) -> ToolResponse:
         """
         Executes Python code and returns the output. 
         Note: You must use 'print()' to see output.
@@ -60,11 +60,11 @@ class SystemTools(BaseSkill):
             code (str): The Python code to execute
         
         Returns:
-            str: Output of the executed code or error message
+            ToolResponse: Output of the executed code or error message
         """
         return await self.system_execution_skill.python_execute(code)
 
-    async def run_shell(self, command: str) -> str:
+    async def run_shell(self, command: str) -> ToolResponse:
         """
         Executes a shell command and returns the result.
         
@@ -72,6 +72,6 @@ class SystemTools(BaseSkill):
             command (str): The shell command to execute
         
         Returns:
-            str: Result of the executed command or error message
+            ToolResponse: Result of the executed command or error message
         """
         return await self.system_execution_skill.shell_execute(command)
