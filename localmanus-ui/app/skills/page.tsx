@@ -3,6 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Settings, CheckCircle, Circle, Info, ChevronRight } from 'lucide-react';
 import * as Icons from 'lucide-react';
+import Sidebar from '../components/Sidebar';
+import UserStatus from '../components/UserStatus';
+import { getApiBaseUrl } from '../utils/api';
 import styles from './skills.module.css';
 
 interface Tool {
@@ -23,11 +26,6 @@ interface Skill {
   config: Record<string, any>;
 }
 
-import Sidebar from '../components/Sidebar';
-import UserStatus from '../components/UserStatus';
-import { getApiBaseUrl } from '../utils/api';
-import styles from './skills.module.css';
-
 export default function SkillsPage() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,42 +41,44 @@ export default function SkillsPage() {
     fetchSkills();
   }, []);
 
-    const fetchSkills = async () => {
-        try {
-            const token = localStorage.getItem('access_token');
-            const baseUrl = getApiBaseUrl();
-            const response = await fetch(`${baseUrl}/api/skills`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                setSkills(data);
-            }
-        } catch (error) {
-            console.error('Failed to fetch skills:', error);
-        }
-    };
+  const fetchSkills = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const baseUrl = getApiBaseUrl();
+      const response = await fetch(`${baseUrl}/api/skills`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setSkills(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch skills:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const toggleSkillStatus = async (skillId: string) => {
-        const token = localStorage.getItem('access_token');
-        const skill = skills.find(s => s.id === skillId);
-        if (!skill) return;
+  const toggleSkillStatus = async (skillId: string) => {
+    const token = localStorage.getItem('access_token');
+    const skill = skills.find(s => s.id === skillId);
+    if (!skill) return;
 
-        const baseUrl = getApiBaseUrl();
-        const response = await fetch(`${baseUrl}/api/skills/${skillId}/status`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ enabled: !skill.enabled })
-        });
+    const baseUrl = getApiBaseUrl();
+    const response = await fetch(`${baseUrl}/api/skills/${skillId}/status`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: !skill.enabled })
+    });
 
-        if (response.ok) {
-            fetchSkills();
-        }
-    };
+    if (response.ok) {
+      fetchSkills();
+    }
+  };
 
   const filteredSkills = skills.filter(skill =>
     skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -150,7 +150,7 @@ export default function SkillsPage() {
                       </div>
                       <button
                         className={`${styles.statusToggle} ${skill.enabled ? styles.enabled : ''}`}
-                        onClick={() => toggleSkillStatus(skill.id, !skill.enabled)}
+                        onClick={() => toggleSkillStatus(skill.id)}
                         title={skill.enabled ? '禁用技能' : '启用技能'}
                       >
                         {skill.enabled ? <CheckCircle size={22} fill="currentColor" color="white" /> : <Circle size={22} />}
@@ -207,63 +207,33 @@ export default function SkillsPage() {
         )}
 
         {selectedSkill && (
-          <div className={styles.modal} onClick={() => setSelectedSkill(null)}>
-            <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.modalOverlay} onClick={() => setSelectedSkill(null)}>
+            <div className={styles.modal} onClick={e => e.stopPropagation()}>
               <div className={styles.modalHeader}>
-                <div>
-                  <h2>{selectedSkill.name}</h2>
-                  <p className={styles.modalSubtitle}>{selectedSkill.description}</p>
-                </div>
-                <button className={styles.closeButton} onClick={() => setSelectedSkill(null)}>
-                  ×
-                </button>
+                <h2>{selectedSkill.name}</h2>
+                <button onClick={() => setSelectedSkill(null)}>×</button>
               </div>
-
-              <div className={styles.modalBody}>
-                {showConfig ? (
-                  <div className={styles.configSection}>
-                    <h3>技能配置</h3>
-                    <p className={styles.configNote}>
-                      您可以自定义技能的运行参数。目前显示为默认设置。
-                    </p>
-                    <pre className={styles.configJson}>
-                      {JSON.stringify(selectedSkill.config, null, 2) || '{}'}
-                    </pre>
-                  </div>
-                ) : (
-                  <div className={styles.detailsSection}>
-                    <h3>可用工具</h3>
+              
+              {showConfig ? (
+                <div className={styles.modalContent}>
+                  <h3>技能配置</h3>
+                  <p className={styles.comingSoon}>配置面板开发中...</p>
+                </div>
+              ) : (
+                <div className={styles.modalContent}>
+                  <p className={styles.modalDescription}>{selectedSkill.description}</p>
+                  
+                  <h3>包含的工具 ({selectedSkill.tools.length})</h3>
+                  <div className={styles.toolsDetailList}>
                     {selectedSkill.tools.map((tool, index) => (
                       <div key={index} className={styles.toolDetail}>
-                        <div className={styles.toolDetailHeader}>
-                          <h4>{tool.name}</h4>
-                        </div>
-                        <p className={styles.toolDetailDescription}>{tool.description}</p>
-                        {tool.parameters && tool.parameters.properties && (
-                          <div className={styles.parameters}>
-                            <strong>调用参数:</strong>
-                            <ul>
-                              {Object.entries(tool.parameters.properties).map(([key, value]: [string, any]) => (
-                                <li key={key}>
-                                  <code>{key}</code>
-                                  {tool.required?.includes(key) && <span className={styles.required}>*</span>}
-                                  : {value.description || value.type}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
+                        <div className={styles.toolDetailName}>{tool.name}</div>
+                        <div className={styles.toolDetailDesc}>{tool.description}</div>
                       </div>
                     ))}
                   </div>
-                )}
-              </div>
-
-              <div className={styles.modalFooter}>
-                <button className={styles.switchButton} onClick={() => setShowConfig(!showConfig)}>
-                  {showConfig ? '查看工具详情' : '进入配置模式'}
-                </button>
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}

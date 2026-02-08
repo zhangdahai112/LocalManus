@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { Cpu, Globe, ShieldCheck, Save } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import UserStatus from '../components/UserStatus';
 import { getApiBaseUrl } from '../utils/api';
@@ -36,6 +37,8 @@ export default function SettingsPage() {
             }
         } catch (error) {
             console.error('Failed to load settings:', error);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -94,8 +97,8 @@ export default function SettingsPage() {
                 ) : (
                     <div className={styles.settingsGrid}>
                         {message && (
-                            <div className={`${styles.message} ${styles[message.type]}`}>
-                                {message.text}
+                            <div className={styles.message}>
+                                {message}
                             </div>
                         )}
 

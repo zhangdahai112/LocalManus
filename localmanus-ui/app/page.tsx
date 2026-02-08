@@ -26,7 +26,8 @@ export default function Home() {
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (contentRef.current) {
+    // Only auto-scroll in chat mode and when there are messages
+    if (isChatMode && messages.length > 0 && contentRef.current) {
       // Use requestAnimationFrame to ensure the DOM has updated before scrolling
       requestAnimationFrame(() => {
         if (contentRef.current) {
@@ -37,7 +38,7 @@ export default function Home() {
         }
       });
     }
-  }, [messages]);
+  }, [messages, isChatMode]);
 
   const handleSendMessage = async (text: string, filePaths?: string[]) => {
     if ((!text.trim() && !filePaths?.length) || isLoading) return;
@@ -144,6 +145,14 @@ export default function Home() {
     setIsChatMode(false);
     setSessionId(Math.random().toString(36).substring(7));
     setUploadedFiles([]); // Clear uploaded files when starting new chat
+    
+    // Scroll to top when returning to home page
+    if (contentRef.current) {
+      contentRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
   };
 
   const tabs = ['全部模板', '创意与设计', '通用', '营销增长', '产品调研', '市场推广', '学习与成长', '求职发展', '我的模板'];
