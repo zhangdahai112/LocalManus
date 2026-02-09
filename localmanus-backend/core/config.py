@@ -14,6 +14,7 @@ AGENT_MODEL_CONFIGS = [
         "base_url": os.getenv("OPENAI_API_BASE", "https://api.moonshot.cn/v1"),
     }
 ]
+print("base_url" + os.getenv("OPENAI_API_BASE", "https://api.moonshot.cn/v1"))
 
 # Server configurations
 HOST = "0.0.0.0"
