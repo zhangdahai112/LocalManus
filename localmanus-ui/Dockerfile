@@ -11,7 +11,7 @@ COPY . .
 
 # Build the application
 # Note: In a real scenario, you might need environment variables here
-RUN npm run build
+RUN npm run build:prod
 
 # Production stage
 FROM node:20-alpine AS runner
