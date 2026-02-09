@@ -62,6 +62,59 @@ class FirecrackerManager:
         
         if not os.path.exists(self.base_dir):
             os.makedirs(self.base_dir)
+            
+        # Clean up any stale sockets from previous runs
+        self._cleanup_stale_sockets()
+        
+    def _cleanup_stale_sockets(self):
+        """Remove any leftover socket files from previous runs."""
+        try:
+            for file in os.listdir(self.base_dir):
+                if file.endswith('.socket'):
+                    socket_path = os.path.join(self.base_dir, file)
+                    try:
+                        os.remove(socket_path)
+                        logger.info(f"Cleaned up stale socket: {socket_path}")
+                    except Exception as e:
+                        logger.warning(f"Could not remove {socket_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Socket cleanup failed: {e}")
+            
+    def cleanup_vm(self, user_id: str):
+        """Stop and cleanup a VM instance."""
+        if user_id not in self.vms:
+            logger.warning(f"No VM found for user {user_id}")
+            return
+            
+        vm = self.vms[user_id]
+        
+        # Terminate process
+        if vm.process and vm.process.poll() is None:
+            vm.process.terminate()
+            try:
+                vm.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                vm.process.kill()
+                
+        # Remove socket file
+        if os.path.exists(vm.socket_path):
+            try:
+                os.remove(vm.socket_path)
+                logger.info(f"Removed socket: {vm.socket_path}")
+            except Exception as e:
+                logger.error(f"Failed to remove socket {vm.socket_path}: {e}")
+                
+        # Clean up chroot directory
+        if os.path.exists(vm.chroot_base):
+            try:
+                import shutil
+                shutil.rmtree(vm.chroot_base)
+                logger.info(f"Removed chroot: {vm.chroot_base}")
+            except Exception as e:
+                logger.error(f"Failed to remove chroot {vm.chroot_base}: {e}")
+                
+        del self.vms[user_id]
+        logger.info(f"Cleaned up VM for user {user_id}")
 
     def _setup_tap(self, tap_name: str, bridge_name: str = "br0"):
         """Creates and configures a TAP device for the VM."""
@@ -86,21 +139,41 @@ class FirecrackerManager:
         
         os.makedirs(chroot_base, exist_ok=True)
         
+        # Clean up any existing socket file
+        if os.path.exists(socket_path):
+            try:
+                os.remove(socket_path)
+                logger.info(f"Removed stale socket: {socket_path}")
+            except Exception as e:
+                logger.error(f"Failed to remove stale socket {socket_path}: {e}")
+        
         # 1. Start Firecracker process
         cmd = [self.bin_path, "--api-sock", socket_path]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except FileNotFoundError:
+            raise Exception(f"Firecracker binary not found at {self.bin_path}. Run firecracker_setup.sh first.")
+        except Exception as e:
+            raise Exception(f"Failed to start Firecracker process: {e}")
         
         vm = FirecrackerVM(vm_id, socket_path, chroot_base)
         vm.process = process
         
         # Wait for socket to be ready
         retries = 0
-        while not os.path.exists(socket_path) and retries < 10:
+        max_retries = 10
+        while not os.path.exists(socket_path) and retries < max_retries:
+            # Check if process is still running
+            if process.poll() is not None:
+                stderr_output = process.stderr.read().decode('utf-8') if process.stderr else ""
+                raise Exception(f"Firecracker process exited prematurely. Error: {stderr_output}")
             time.sleep(0.2)
             retries += 1
             
         if not os.path.exists(socket_path):
-            raise Exception("Failed to start Firecracker: Socket not found")
+            # Try to get error output
+            stderr_output = process.stderr.read().decode('utf-8') if process.stderr else "No error output"
+            raise Exception(f"Failed to start Firecracker: Socket not found after {max_retries} retries. Error: {stderr_output}")
 
         # 2. Configure Boot Source
         vm.api_put("boot-source", {

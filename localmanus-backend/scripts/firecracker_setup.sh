@@ -91,6 +91,40 @@ sudo iptables -A FORWARD -i br0 -j ACCEPT
 # 8. Permissions
 sudo chmod 666 /dev/kvm
 
+# 9. Socket Directory Setup and Cleanup
+echo "Setting up socket directory and cleanup..."
+SOCKET_DIR="/tmp/localmanus_vms"
+sudo mkdir -p ${SOCKET_DIR}
+sudo chown -R $USER:$USER ${SOCKET_DIR}
+sudo chmod 755 ${SOCKET_DIR}
+
+# Clean up any stale Firecracker sockets
+echo "Cleaning up stale Firecracker processes and sockets..."
+sudo pkill -9 firecracker 2>/dev/null || true
+sudo rm -f /run/firecracker.socket 2>/dev/null || true
+sudo rm -f ${SOCKET_DIR}/*.socket 2>/dev/null || true
+
+# 10. Create cleanup script
+cat > ${DATA_DIR}/cleanup_firecracker.sh << 'EOF'
+#!/bin/bash
+# LocalManus Firecracker Cleanup Script
+echo "Stopping all Firecracker processes..."
+sudo pkill -9 firecracker 2>/dev/null || true
+sleep 1
+
+echo "Removing stale sockets..."
+sudo rm -f /run/firecracker.socket 2>/dev/null || true
+sudo rm -f /tmp/localmanus_vms/*.socket 2>/dev/null || true
+
+echo "Cleaning up TAP devices..."
+for tap in $(ip link show | grep "tap_" | awk -F: '{print $2}' | tr -d ' '); do
+    sudo ip link delete $tap 2>/dev/null || true
+done
+
+echo "Cleanup complete!"
+EOF
+chmod +x ${DATA_DIR}/cleanup_firecracker.sh
+
 echo -e "\n${GREEN}========================================================${NC}"
 echo -e "${GREEN}Firecracker Cluster Setup Complete!${NC}"
 echo -e "Binary: ${INSTALL_DIR}/firecracker"
@@ -101,4 +135,10 @@ echo "To integrate with LocalManus Backend:"
 echo "1. Export environment variables:"
 echo "   export FC_KERNEL_PATH=${DATA_DIR}/images/vmlinux"
 echo "   export FC_ROOTFS_PATH=${DATA_DIR}/images/rootfs.ext4"
-echo "2. Run the main server: python main.py"
+echo "2. Clean up before starting (if needed): ${DATA_DIR}/cleanup_firecracker.sh"
+echo "3. Run the main server: python main.py"
+echo ""
+echo "Troubleshooting:"
+echo "- If socket errors occur, run: ${DATA_DIR}/cleanup_firecracker.sh"
+echo "- Check running processes: ps aux | grep firecracker"
+echo "- Check socket files: ls -la /tmp/localmanus_vms/*.socket"
