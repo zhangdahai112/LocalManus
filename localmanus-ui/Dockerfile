@@ -6,11 +6,13 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
+# Copy production environment configuration
+COPY .env.production .env.production
+
 # Copy source code
 COPY . .
 
-# Build the application
-# Note: In a real scenario, you might need environment variables here
+# Build the application with production environment
 RUN npm run build:prod
 
 # Production stage
@@ -25,6 +27,7 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/.env.production ./.env.production
 
 EXPOSE 3000
 

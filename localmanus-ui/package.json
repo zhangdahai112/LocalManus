@@ -6,7 +6,8 @@
     "dev": "next dev",
     "dev:local": "next dev --port 3000",
     "build": "next build",
-    "build:prod": "rm -rf .next && next build",
+    "build:prod": "next build",
+    "clean": "rimraf .next",
     "start": "next start",
     "start:prod": "next start --port 3000",
     "lint": "eslint"
