@@ -87,6 +87,24 @@ class SandboxClient:
         img_data = result.get('data', {}).get('screenshot', '')
         return base64.b64decode(img_data) if img_data else b''
     
+    def browser_navigate(self, url: str, wait_until: str = "domcontentloaded", timeout: int = 30000) -> Dict[str, Any]:
+        """Navigate browser to a URL"""
+        payload = {
+            "url": url,
+            "wait_until": wait_until,
+            "timeout": timeout
+        }
+        return self._request('POST', '/v1/browser/page/navigate', json=payload)
+    
+    def browser_get_content(self) -> str:
+        """Get current page HTML content"""
+        result = self._request('GET', '/v1/browser/page/content')
+        return result.get('data', {}).get('content', '')
+    
+    def browser_evaluate(self, script: str) -> Dict[str, Any]:
+        """Execute JavaScript in browser"""
+        return self._request('POST', '/v1/browser/page/evaluate', json={"script": script})
+    
     def get_browser_info(self) -> Dict[str, Any]:
         """Get browser CDP URL and info"""
         return self._request('GET', '/v1/browser/info')
@@ -103,7 +121,7 @@ class SandboxClient:
 class SandboxManager:
     """
     Unified Sandbox Manager supporting both Local and Online modes.
-    - Local Mode: Connect to pre-existing sandbox at http://192.168.126.131:8080
+    - Local Mode: Connect to pre-existing sandbox at http://192.168.126.132:8080
     - Online Mode: Spin up new Docker containers on demand
     """
     DOCKER_IMAGE = "ghcr.io/agent-infra/sandbox:latest"
@@ -111,7 +129,7 @@ class SandboxManager:
     
     def __init__(self, 
                  mode: SandboxMode = SandboxMode.LOCAL,
-                 local_url: str = "http://192.168.126.131:8080",
+                 local_url: str = "http://192.168.126.132:8080",
                  use_china_mirror: bool = False):
         self.mode = mode
         self.local_url = local_url
@@ -280,7 +298,7 @@ try:
     mode = SandboxMode.ONLINE if SANDBOX_MODE.lower() == 'online' else SandboxMode.LOCAL
 except ImportError:
     mode = SandboxMode.LOCAL
-    SANDBOX_LOCAL_URL = os.getenv('SANDBOX_LOCAL_URL', 'http://192.168.126.131:8080')
+    SANDBOX_LOCAL_URL = os.getenv('SANDBOX_LOCAL_URL', 'http://192.168.126.132:8080')
     USE_CHINA_MIRROR = os.getenv('USE_CHINA_MIRROR', 'false').lower() == 'true'
 
 sandbox_manager = SandboxManager(

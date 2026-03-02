@@ -52,82 +52,56 @@ class ReActAgent(ASReActAgent):
 
     async def run_stream(self, messages: list) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        Pure streaming ReAct loop - uses streaming interface for all LLM responses.
+        Streaming ReAct loop using AgentScope's native agent capabilities.
         
-        This method streams tokens directly from the model as they are generated,
-        providing real-time feedback to the user.
+        This method uses the parent ReActAgent's built-in reply mechanism
+        which handles streaming, tool execution, and the ReAct loop internally.
         """
         new_messages = []
-        full_response = ""
-        tool_calls_from_stream = []
         
         try:
-            # Format messages for the model
-            formatted_messages = messages
-            if hasattr(self, 'formatter') and hasattr(self.formatter, 'format'):
-                try:
-                    format_res = self.formatter.format(messages)
-                    formatted_messages = await format_res if hasattr(format_res, '__await__') else format_res
-                except Exception as e:
-                    logger.warning(f"Formatting failed: {e}")
+            # Convert dict messages to Msg objects if needed
+            msg_objects = []
+            for m in messages:
+                if isinstance(m, dict):
+                    msg_objects.append(Msg(
+                        name=m.get("name", "User"),
+                        content=m["content"],
+                        role=m["role"]
+                    ))
+                else:
+                    msg_objects.append(m)
             
-            if not isinstance(formatted_messages, list):
-                formatted_messages = [formatted_messages] if formatted_messages else []
+            # Get the last user message to respond to
+            last_msg = msg_objects[-1] if msg_objects else None
             
-            # Pure streaming - call model with stream=True
-            model_result = self.original_model(formatted_messages, stream=True)
-            response_stream = await model_result if hasattr(model_result, '__await__') else model_result
+            if not last_msg:
+                yield {"content": "Error: No message to respond to."}
+                return
             
-            # Process streaming response
-            if hasattr(response_stream, '__anext__'):
-                # Async generator
-                async for chunk in response_stream:
-                    token = self._extract_token_from_chunk(chunk)
-                    if token:
-                        delta = token[len(full_response):]
-                        full_response += delta
-                        yield {"content": delta}
-                        await asyncio.sleep(0)
-                    
-                    tool_call = self._extract_tool_call_from_chunk(chunk)
-                    if tool_call:
-                        tool_calls_from_stream.append(tool_call)
-            else:
-                # Regular generator
-                for chunk in response_stream:
-                    token = self._extract_token_from_chunk(chunk)
-                    if token:
-                        delta = token[len(full_response):]
-                        full_response += delta
-                        yield {"content": delta}
-                        await asyncio.sleep(0)
-                    
-                    tool_call = self._extract_tool_call_from_chunk(chunk)
-                    if tool_call:
-                        tool_calls_from_stream.append(tool_call)
+            # Call the parent ReActAgent's reply method
+            # This handles the full ReAct loop including tool calls
+            response = await self.reply(last_msg)
             
-            # Record assistant response
-            if full_response:
-                assistant_msg = {"role": "assistant", "content": full_response}
-                messages.append(assistant_msg)
-                new_messages.append(assistant_msg)
-            
-            # Execute tools if present
-            if tool_calls_from_stream:
-                logger.info(f"Using {len(tool_calls_from_stream)} tool calls from streaming chunks")
+            # Extract and yield the response content
+            if response:
+                content = self._extract_content(response)
+                if content:
+                    yield {"content": content}
                 
-                for tc in tool_calls_from_stream:
-                    name = tc.get('function', {}).get('name', tc.get('name', 'unknown'))
-                    yield {"content": f"\n\n🔧 **[Using Tool]**: `{name}`\n"}
-                    
-                    observation = await self.execute_tool(tc)
-                    yield {"content": f"📊 **[Result]**:\n{observation}\n\n"}
-                    
-                    system_msg = {"role": "system", "content": observation}
-                    messages.append(system_msg)
-                    new_messages.append(system_msg)
+                # Add to history sync
+                if hasattr(response, 'role') and hasattr(response, 'content'):
+                    new_messages.append({
+                        "role": response.role,
+                        "content": response.content
+                    })
                 
-                yield {"_meta": {"tool_calls_made": True, "needs_continuation": True}}
+                # Check for tool calls in response
+                tool_calls = self._extract_tool_calls(response)
+                if tool_calls:
+                    for tc in tool_calls:
+                        name = tc.get('function', {}).get('name', tc.get('name', 'unknown'))
+                        yield {"content": f"\n\n🔧 **[Tool Used]**: `{name}`\n"}
                     
         except Exception as e:
             logger.error(f"Error in ReAct loop: {str(e)}", exc_info=True)

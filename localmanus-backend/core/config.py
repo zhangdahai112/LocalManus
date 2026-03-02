@@ -22,5 +22,5 @@ PORT = 8000
 
 # Sandbox configurations
 SANDBOX_MODE = os.getenv("SANDBOX_MODE", "local")  # local or online
-SANDBOX_LOCAL_URL = os.getenv("SANDBOX_LOCAL_URL", "http://192.168.126.131:8080")
+SANDBOX_LOCAL_URL = os.getenv("SANDBOX_LOCAL_URL", "http://192.168.126.132:8080")
 USE_CHINA_MIRROR = os.getenv("USE_CHINA_MIRROR", "false").lower() == "true"

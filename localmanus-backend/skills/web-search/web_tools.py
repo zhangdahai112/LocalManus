@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import re
-from typing import List, Optional
+import base64
+from typing import List, Optional, Dict, Any
 from urllib.parse import quote_plus
 
 from core.skill_manager import BaseSkill
@@ -11,39 +12,33 @@ from agentscope.message import TextBlock
 
 logger = logging.getLogger("LocalManus-WebSearch")
 
-# Shared Playwright browser pool: cdp_url -> (playwright, browser)
-_browser_pool: dict = {}
+
+class SandboxBrowserError(Exception):
+    """Raised when sandbox browser is not available."""
+    pass
 
 
-async def _get_playwright_browser(cdp_url: str):
-    """Return a cached Playwright browser connected over CDP, or create one."""
+def _ensure_sandbox_available(user_id: str) -> None:
+    """Verify sandbox is available for the user."""
     try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "playwright is not installed. Run: pip install playwright && playwright install chromium"
-        )
-
-    if cdp_url not in _browser_pool:
-        pw = await async_playwright().start()
-        browser = await pw.chromium.connect_over_cdp(cdp_url)
-        _browser_pool[cdp_url] = (pw, browser)
-        logger.info(f"Connected to sandbox browser via CDP: {cdp_url}")
-
-    return _browser_pool[cdp_url][1]
-
-
-def _get_cdp_url(user_id: str) -> str:
-    """Resolve the CDP WebSocket URL for the user's sandbox."""
-    client = sandbox_manager.get_client(str(user_id))
-    info = client.get_browser_info()
-    cdp_url = info.get("data", {}).get("cdp_url") or info.get("cdp_url", "")
-    if not cdp_url:
-        # Fallback: build from sandbox base URL
         sandbox_info = sandbox_manager.get_sandbox(str(user_id))
-        base = sandbox_info.base_url.rstrip("/")
-        cdp_url = f"{base}/cdp"
-    return cdp_url
+        if not sandbox_info or not sandbox_info.base_url:
+            raise SandboxBrowserError(
+                f"No sandbox available for user {user_id}. "
+                "Please ensure sandbox is started (SANDBOX_MODE=local requires "
+                "running sandbox container, SANDBOX_MODE=online will auto-create)."
+            )
+    except Exception as e:
+        if isinstance(e, SandboxBrowserError):
+            raise
+        raise SandboxBrowserError(
+            f"Failed to access sandbox for user {user_id}: {e}"
+        ) from e
+
+
+def _get_sandbox_client(user_id: str):
+    """Get sandbox API client for user."""
+    return sandbox_manager.get_client(str(user_id))
 
 
 def _clean_text(raw: str, max_len: int = 6000) -> str:
@@ -73,170 +68,8 @@ def _parse_bing_results(html: str) -> List[dict]:
     return results
 
 
-class WebSearchSkill(BaseSkill):
-    """
-    Web search and scraping skill powered by the sandbox's Chrome browser.
-    Uses Playwright over CDP to drive the real Chromium instance inside the
-    agent-infra/sandbox container — bypasses bot-detection that blocks
-    simple HTTP clients.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.name = "web_search"
-        self.description = "Search the web and scrape pages using the sandbox Chrome browser."
-
-    # ------------------------------------------------------------------
-    # Public tool methods
-    # ------------------------------------------------------------------
-
-    async def search_web(
-        self,
-        query: str,
-        user_id: str,
-        engine: str = "bing",
-        max_results: int = 5,
-    ) -> ToolResponse:
-        """
-        Search the web via the sandbox Chrome browser and return structured results.
-
-        Args:
-            query (str): The search query string.
-            user_id (str): User ID used to resolve the sandbox instance.
-            engine (str): Search engine to use — 'bing' (default), 'google', or 'duckduckgo'.
-            max_results (int): Maximum number of results to return (default: 5).
-
-        Returns:
-            ToolResponse: Formatted search results.
-        """
-        try:
-            results = await self._browser_search(query, user_id, engine, max_results)
-            if not results:
-                return ToolResponse(content=[TextBlock(type="text", text="No results found.")])
-
-            lines = []
-            for i, r in enumerate(results, 1):
-                lines.append(f"{i}. **{r['title']}**")
-                lines.append(f"   URL: {r['url']}")
-                if r.get("snippet"):
-                    lines.append(f"   {r['snippet']}")
-                lines.append("")
-            return ToolResponse(content=[TextBlock(type="text", text="\n".join(lines))])
-        except Exception as e:
-            logger.error(f"search_web error: {e}", exc_info=True)
-            return ToolResponse(content=[TextBlock(type="text", text=f"Search error: {e}")])
-
-    async def scrape_web(self, url: str, user_id: str) -> ToolResponse:
-        """
-        Navigate the sandbox browser to a URL and return the visible page text.
-
-        Args:
-            url (str): The URL to scrape.
-            user_id (str): User ID used to resolve the sandbox instance.
-
-        Returns:
-            ToolResponse: Visible text content of the page.
-        """
-        try:
-            text = await self._browser_fetch_text(url, user_id)
-            return ToolResponse(content=[TextBlock(type="text", text=text)])
-        except Exception as e:
-            logger.error(f"scrape_web error: {e}", exc_info=True)
-            return ToolResponse(content=[TextBlock(type="text", text=f"Scrape error: {e}")])
-
-    async def browser_screenshot(self, url: str, user_id: str) -> ToolResponse:
-        """
-        Navigate the sandbox browser to a URL and capture a screenshot.
-
-        Args:
-            url (str): The URL to visit.
-            user_id (str): User ID used to resolve the sandbox instance.
-
-        Returns:
-            ToolResponse: Screenshot saved path or base64 description.
-        """
-        try:
-            import base64
-            cdp_url = _get_cdp_url(str(user_id))
-            browser = await _get_playwright_browser(cdp_url)
-            page = await browser.new_page()
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                await page.wait_for_timeout(1500)
-                png = await page.screenshot(full_page=False)
-            finally:
-                await page.close()
-
-            b64 = base64.b64encode(png).decode()
-            msg = f"Screenshot captured ({len(png)} bytes, base64 truncated): {b64[:200]}..."
-            return ToolResponse(content=[TextBlock(type="text", text=msg)])
-        except Exception as e:
-            logger.error(f"browser_screenshot error: {e}", exc_info=True)
-            return ToolResponse(content=[TextBlock(type="text", text=f"Screenshot error: {e}")])
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _browser_search(
-        self, query: str, user_id: str, engine: str, max_results: int
-    ) -> List[dict]:
-        """Drive the sandbox Chromium to a search engine and parse SERP."""
-        search_urls = {
-            "bing": f"https://www.bing.com/search?q={quote_plus(query)}&count={max_results}",
-            "google": f"https://www.google.com/search?q={quote_plus(query)}&num={max_results}",
-            "duckduckgo": f"https://duckduckgo.com/?q={quote_plus(query)}&ia=web",
-        }
-        url = search_urls.get(engine.lower(), search_urls["bing"])
-
-        cdp_url = _get_cdp_url(str(user_id))
-        browser = await _get_playwright_browser(cdp_url)
-        page = await browser.new_page()
-        results = []
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            await page.wait_for_timeout(1500)   # let JS render
-            html = await page.content()
-
-            if engine.lower() == "bing":
-                results = _parse_bing_results(html)
-            elif engine.lower() == "google":
-                results = _parse_google_results(html)
-            elif engine.lower() == "duckduckgo":
-                results = _parse_ddg_results(html)
-            else:
-                results = _parse_bing_results(html)
-        finally:
-            await page.close()
-
-        return results[:max_results]
-
-    async def _browser_fetch_text(self, url: str, user_id: str) -> str:
-        """Drive the sandbox Chromium to a URL and extract visible text."""
-        cdp_url = _get_cdp_url(str(user_id))
-        browser = await _get_playwright_browser(cdp_url)
-        page = await browser.new_page()
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            await page.wait_for_timeout(1000)
-            # Remove nav/footer/script noise via JS
-            raw = await page.evaluate("""
-                () => {
-                    const remove = ['script','style','nav','footer','header','aside'];
-                    remove.forEach(tag => document.querySelectorAll(tag).forEach(el => el.remove()));
-                    return document.body ? document.body.innerText : '';
-                }
-            """)
-        finally:
-            await page.close()
-        return _clean_text(raw)
-
-
-# ------------------------------------------------------------------
-# SERP parsers
-# ------------------------------------------------------------------
-
 def _parse_google_results(html: str) -> List[dict]:
+    """Extract title/url/snippet from Google SERP HTML."""
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "html.parser")
     results = []
@@ -258,6 +91,7 @@ def _parse_google_results(html: str) -> List[dict]:
 
 
 def _parse_ddg_results(html: str) -> List[dict]:
+    """Extract title/url/snippet from DuckDuckGo SERP HTML."""
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "html.parser")
     results = []
@@ -271,6 +105,276 @@ def _parse_ddg_results(html: str) -> List[dict]:
                 "snippet": snippet_el.get_text(strip=True) if snippet_el else "",
             })
     return results
+
+
+class WebSearchSkill(BaseSkill):
+    """
+    Web search and scraping skill powered by the sandbox's Chrome browser.
+    
+    ALL browser operations use the sandbox REST API (/v1/browser/* endpoints).
+    No direct Playwright or host-machine browser access.
+    
+    This ensures:
+    - Consistent browser environment across all users
+    - Isolation from host machine
+    - Simple REST API interface (no WebSocket/CDP management)
+    - Bypass of bot-detection via real browser automation
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.name = "web_search"
+        self.description = (
+            "Search the web and scrape pages using the sandbox Chrome browser. "
+            "All operations are executed via sandbox REST API."
+        )
+
+    # ------------------------------------------------------------------
+    # Public tool methods
+    # ------------------------------------------------------------------
+
+    async def check_browser_status(self, user_id: str) -> ToolResponse:
+        """
+        Check if the sandbox browser is available and ready.
+
+        Args:
+            user_id (str): User ID used to resolve the sandbox instance.
+
+        Returns:
+            ToolResponse: Browser status information.
+        """
+        try:
+            _ensure_sandbox_available(user_id)
+            client = _get_sandbox_client(user_id)
+            
+            # Get browser info via REST API
+            info = client.get_browser_info()
+            
+            # Get sandbox info
+            sandbox_info = sandbox_manager.get_sandbox(str(user_id))
+            
+            status_text = (
+                f"✅ Sandbox browser is ready\n\n"
+                f"🔧 Browser Info: {info}\n"
+                f"📦 Sandbox Mode: {sandbox_info.mode.value}\n"
+                f"🏠 Sandbox Base URL: {sandbox_info.base_url}\n\n"
+                f"You can now use search_web, scrape_web, and browser_screenshot."
+            )
+            return ToolResponse(content=[TextBlock(type="text", text=status_text)])
+        except SandboxBrowserError as e:
+            error_text = (
+                f"❌ Sandbox browser not available\n\n"
+                f"Error: {e}\n\n"
+                f"To fix:\n"
+                f"1. Ensure sandbox is running:\n"
+                f"   docker run --security-opt seccomp=unconfined -p 8080:8080 ghcr.io/agent-infra/sandbox:latest\n"
+                f"2. Check SANDBOX_MODE in .env (local/online)\n"
+                f"3. Verify SANDBOX_LOCAL_URL is correct"
+            )
+            return ToolResponse(content=[TextBlock(type="text", text=error_text)])
+        except Exception as e:
+            return ToolResponse(content=[TextBlock(type="text", text=f"❌ Unexpected error: {e}")])
+
+    async def search_web(
+        self,
+        query: str,
+        user_id: str,
+        engine: str = "bing",
+        max_results: int = 5,
+    ) -> ToolResponse:
+        """
+        Search the web via the sandbox Chrome browser and return structured results.
+
+        Args:
+            query (str): The search query string.
+            user_id (str): User ID used to resolve the sandbox instance.
+            engine (str): Search engine to use — 'bing' (default), 'google', or 'duckduckgo'.
+            max_results (int): Maximum number of results to return (default: 5).
+
+        Returns:
+            ToolResponse: Formatted search results.
+        """
+        try:
+            _ensure_sandbox_available(user_id)
+            results = await self._api_search(query, user_id, engine, max_results)
+            if not results:
+                return ToolResponse(content=[TextBlock(type="text", text="No results found.")])
+
+            lines = []
+            for i, r in enumerate(results, 1):
+                lines.append(f"{i}. **{r['title']}**")
+                lines.append(f"   URL: {r['url']}")
+                if r.get("snippet"):
+                    lines.append(f"   {r['snippet']}")
+                lines.append("")
+            return ToolResponse(content=[TextBlock(type="text", text="\n".join(lines))])
+        except SandboxBrowserError as e:
+            return ToolResponse(content=[TextBlock(type="text", text=f"❌ Sandbox Error: {e}")])
+        except Exception as e:
+            logger.error(f"search_web error: {e}", exc_info=True)
+            return ToolResponse(content=[TextBlock(type="text", text=f"Search error: {e}")])
+
+    async def scrape_web(self, url: str, user_id: str) -> ToolResponse:
+        """
+        Navigate the sandbox browser to a URL and return the visible page text.
+
+        Args:
+            url (str): The URL to scrape.
+            user_id (str): User ID used to resolve the sandbox instance.
+
+        Returns:
+            ToolResponse: Visible text content of the page.
+        """
+        try:
+            _ensure_sandbox_available(user_id)
+            text = await self._api_fetch_text(url, user_id)
+            return ToolResponse(content=[TextBlock(type="text", text=text)])
+        except SandboxBrowserError as e:
+            return ToolResponse(content=[TextBlock(type="text", text=f"❌ Sandbox Error: {e}")])
+        except Exception as e:
+            logger.error(f"scrape_web error: {e}", exc_info=True)
+            return ToolResponse(content=[TextBlock(type="text", text=f"Scrape error: {e}")])
+
+    async def browser_screenshot(self, url: str, user_id: str) -> ToolResponse:
+        """
+        Navigate the sandbox browser to a URL and capture a screenshot.
+
+        Args:
+            url (str): The URL to visit.
+            user_id (str): User ID used to resolve the sandbox instance.
+
+        Returns:
+            ToolResponse: Screenshot saved path or base64 description.
+        """
+        try:
+            _ensure_sandbox_available(user_id)
+            client = _get_sandbox_client(user_id)
+            
+            # Navigate to URL first
+            client.browser_navigate(url, wait_until="domcontentloaded", timeout=30000)
+            
+            # Wait a bit for page to stabilize
+            await asyncio.sleep(1.5)
+            
+            # Take screenshot via REST API
+            png_bytes = client.screenshot()
+            
+            b64 = base64.b64encode(png_bytes).decode()
+            msg = f"Screenshot captured ({len(png_bytes)} bytes, base64 truncated): {b64[:200]}..."
+            return ToolResponse(content=[TextBlock(type="text", text=msg)])
+        except SandboxBrowserError as e:
+            return ToolResponse(content=[TextBlock(type="text", text=f"❌ Sandbox Error: {e}")])
+        except Exception as e:
+            logger.error(f"browser_screenshot error: {e}", exc_info=True)
+            return ToolResponse(content=[TextBlock(type="text", text=f"Screenshot error: {e}")])
+
+    async def browser_click(self, user_id: str, selector: str) -> ToolResponse:
+        """
+        Click an element in the sandbox browser.
+
+        Args:
+            user_id (str): User ID used to resolve the sandbox instance.
+            selector (str): CSS selector or XPath of element to click.
+
+        Returns:
+            ToolResponse: Click result.
+        """
+        try:
+            _ensure_sandbox_available(user_id)
+            client = _get_sandbox_client(user_id)
+            
+            result = client.browser_execute_action("click", selector=selector)
+            return ToolResponse(content=[TextBlock(type="text", text=f"Clicked element: {selector}")])
+        except SandboxBrowserError as e:
+            return ToolResponse(content=[TextBlock(type="text", text=f"❌ Sandbox Error: {e}")])
+        except Exception as e:
+            logger.error(f"browser_click error: {e}", exc_info=True)
+            return ToolResponse(content=[TextBlock(type="text", text=f"Click error: {e}")])
+
+    async def browser_type(self, user_id: str, selector: str, text: str) -> ToolResponse:
+        """
+        Type text into an element in the sandbox browser.
+
+        Args:
+            user_id (str): User ID used to resolve the sandbox instance.
+            selector (str): CSS selector or XPath of input element.
+            text (str): Text to type.
+
+        Returns:
+            ToolResponse: Type result.
+        """
+        try:
+            _ensure_sandbox_available(user_id)
+            client = _get_sandbox_client(user_id)
+            
+            result = client.browser_execute_action("type", selector=selector, text=text)
+            return ToolResponse(content=[TextBlock(type="text", text=f"Typed text into: {selector}")])
+        except SandboxBrowserError as e:
+            return ToolResponse(content=[TextBlock(type="text", text=f"❌ Sandbox Error: {e}")])
+        except Exception as e:
+            logger.error(f"browser_type error: {e}", exc_info=True)
+            return ToolResponse(content=[TextBlock(type="text", text=f"Type error: {e}")])
+
+    # ------------------------------------------------------------------
+    # Internal helpers using Sandbox REST API
+    # ------------------------------------------------------------------
+
+    async def _api_search(
+        self, query: str, user_id: str, engine: str, max_results: int
+    ) -> List[dict]:
+        """Search using sandbox browser via REST API."""
+        search_urls = {
+            "bing": f"https://www.bing.com/search?q={quote_plus(query)}&count={max_results}",
+            "google": f"https://www.google.com/search?q={quote_plus(query)}&num={max_results}",
+            "duckduckgo": f"https://duckduckgo.com/?q={quote_plus(query)}&ia=web",
+        }
+        url = search_urls.get(engine.lower(), search_urls["bing"])
+
+        client = _get_sandbox_client(user_id)
+        
+        # Navigate to search URL
+        client.browser_navigate(url, wait_until="domcontentloaded", timeout=30000)
+        
+        # Wait for JS to render
+        await asyncio.sleep(1.5)
+        
+        # Get page content
+        html = client.browser_get_content()
+
+        # Parse results
+        if engine.lower() == "bing":
+            results = _parse_bing_results(html)
+        elif engine.lower() == "google":
+            results = _parse_google_results(html)
+        elif engine.lower() == "duckduckgo":
+            results = _parse_ddg_results(html)
+        else:
+            results = _parse_bing_results(html)
+
+        return results[:max_results]
+
+    async def _api_fetch_text(self, url: str, user_id: str) -> str:
+        """Fetch page text using sandbox browser via REST API."""
+        client = _get_sandbox_client(user_id)
+        
+        # Navigate to URL
+        client.browser_navigate(url, wait_until="domcontentloaded", timeout=30000)
+        
+        # Wait for page to load
+        await asyncio.sleep(1.0)
+        
+        # Execute JS to clean and extract text
+        script = """
+            () => {
+                const remove = ['script','style','nav','footer','header','aside'];
+                remove.forEach(tag => document.querySelectorAll(tag).forEach(el => el.remove()));
+                return document.body ? document.body.innerText : '';
+            }
+        """
+        result = client.browser_evaluate(script)
+        raw_text = result.get('data', {}).get('result', '')
+        
+        return _clean_text(raw_text)
 
 
 # ------------------------------------------------------------------
