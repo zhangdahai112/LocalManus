@@ -19,3 +19,8 @@ print("base_url" + os.getenv("OPENAI_API_BASE", "https://api.moonshot.cn/v1"))
 # Server configurations
 HOST = "0.0.0.0"
 PORT = 8000
+
+# Sandbox configurations
+SANDBOX_MODE = os.getenv("SANDBOX_MODE", "local")  # local or online
+SANDBOX_LOCAL_URL = os.getenv("SANDBOX_LOCAL_URL", "http://192.168.126.131:8080")
+USE_CHINA_MIRROR = os.getenv("USE_CHINA_MIRROR", "false").lower() == "true"

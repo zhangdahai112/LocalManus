@@ -5,238 +5,284 @@ import time
 import logging
 import socket
 import requests
-from typing import Dict, Any, Optional
+import asyncio
+from typing import Dict, Any, Optional, List
+from enum import Enum
+from dataclasses import dataclass
 
-logger = logging.getLogger("LocalManus-Firecracker")
+logger = logging.getLogger("LocalManus-Sandbox")
 
-class FirecrackerVM:
+class SandboxMode(Enum):
+    """Sandbox execution mode"""
+    LOCAL = "local"  # Connect to existing local sandbox
+    ONLINE = "online"  # Spin up new Docker containers
+
+@dataclass
+class SandboxInfo:
+    """Sandbox instance information"""
+    sandbox_id: str
+    base_url: str
+    mode: SandboxMode
+    container_id: Optional[str] = None
+    vnc_url: Optional[str] = None
+    vscode_url: Optional[str] = None
+    home_dir: Optional[str] = None
+
+class SandboxClient:
     """
-    Represents a single Firecracker microVM instance.
+    Client for interacting with agent-infra/sandbox API.
+    Supports both local connection and online Docker mode.
     """
-    def __init__(self, vm_id: str, socket_path: str, chroot_base: str):
-        self.vm_id = vm_id
-        self.socket_path = socket_path
-        self.chroot_base = chroot_base
-        self.process = None
-        self.vnc_proxy_port = None
-        self.ip_address = None
+    def __init__(self, base_url: str, timeout: int = 30):
+        self.base_url = base_url.rstrip('/')
+        self.timeout = timeout
+        self.session = requests.Session()
+        
+    def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+        """Make HTTP request to sandbox API"""
+        url = f"{self.base_url}{endpoint}"
+        kwargs.setdefault('timeout', self.timeout)
+        
+        try:
+            response = self.session.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Sandbox API error: {e}")
+            raise
+    
+    def get_context(self) -> Dict[str, Any]:
+        """Get sandbox context information"""
+        return self._request('GET', '/v1/sandbox')
+    
+    def exec_command(self, command: str, cwd: Optional[str] = None) -> Dict[str, Any]:
+        """Execute shell command in sandbox"""
+        payload = {'command': command}
+        if cwd:
+            payload['cwd'] = cwd
+        return self._request('POST', '/v1/shell/exec', json=payload)
+    
+    def read_file(self, file_path: str) -> str:
+        """Read file from sandbox"""
+        result = self._request('POST', '/v1/file/read', json={'file': file_path})
+        return result.get('data', {}).get('content', '')
+    
+    def write_file(self, file_path: str, content: str) -> Dict[str, Any]:
+        """Write file to sandbox"""
+        return self._request('POST', '/v1/file/write', json={
+            'file': file_path,
+            'content': content
+        })
+    
+    def list_files(self, path: str) -> List[Dict[str, Any]]:
+        """List files in directory"""
+        result = self._request('POST', '/v1/file/list', json={'path': path})
+        return result.get('data', {}).get('files', [])
+    
+    def screenshot(self) -> bytes:
+        """Take browser screenshot"""
+        result = self._request('POST', '/v1/browser/screenshot')
+        # Assuming the API returns base64 encoded image
+        import base64
+        img_data = result.get('data', {}).get('screenshot', '')
+        return base64.b64decode(img_data) if img_data else b''
+    
+    def get_browser_info(self) -> Dict[str, Any]:
+        """Get browser CDP URL and info"""
+        return self._request('GET', '/v1/browser/info')
+    
+    def execute_jupyter_code(self, code: str) -> Dict[str, Any]:
+        """Execute Python code in Jupyter kernel"""
+        return self._request('POST', '/v1/jupyter/execute', json={'code': code})
 
-    def api_put(self, endpoint: str, data: Dict[str, Any]):
-        """Helper to send PUT requests to the Firecracker API socket."""
-        curl_cmd = [
-            "curl", "--unix-socket", self.socket_path,
-            "-X", "PUT", f"http://localhost/{endpoint}",
-            "-H", "Content-Type: application/json",
-            "-d", json.dumps(data)
-        ]
-        res = subprocess.run(curl_cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            logger.error(f"Firecracker API error ({endpoint}): {res.stderr}")
-            return False
-        return True
-
-    def api_action(self, action_type: str):
-        """Helper to send action requests to the Firecracker API socket."""
-        curl_cmd = [
-            "curl", "--unix-socket", self.socket_path,
-            "-X", "PUT", "http://localhost/actions",
-            "-H", "Content-Type: application/json",
-            "-d", json.dumps({"action_type": action_type})
-        ]
-        res = subprocess.run(curl_cmd, capture_output=True, text=True)
-        return res.returncode == 0
-
-class FirecrackerManager:
+class SandboxManager:
     """
-    Orchestrates Firecracker microVMs and VNC proxies.
+    Unified Sandbox Manager supporting both Local and Online modes.
+    - Local Mode: Connect to pre-existing sandbox at http://192.168.126.131:8080
+    - Online Mode: Spin up new Docker containers on demand
     """
+    DOCKER_IMAGE = "ghcr.io/agent-infra/sandbox:latest"
+    DOCKER_IMAGE_CN = "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
+    
     def __init__(self, 
-                 bin_path: str = "/usr/local/bin/firecracker",
-                 kernel_path: str = "vmlinux",
-                 rootfs_path: str = "rootfs.ext4"):
-        self.bin_path = bin_path
-        self.kernel_path = kernel_path
-        self.rootfs_path = rootfs_path
-        self.vms: Dict[str, FirecrackerVM] = {}
-        self.base_dir = "/tmp/localmanus_vms"
+                 mode: SandboxMode = SandboxMode.LOCAL,
+                 local_url: str = "http://192.168.126.131:8080",
+                 use_china_mirror: bool = False):
+        self.mode = mode
+        self.local_url = local_url
+        self.use_china_mirror = use_china_mirror
+        self.sandboxes: Dict[str, SandboxInfo] = {}
         
-        if not os.path.exists(self.base_dir):
-            os.makedirs(self.base_dir)
-            
-        # Clean up any stale sockets from previous runs
-        self._cleanup_stale_sockets()
+        logger.info(f"Initialized SandboxManager in {mode.value} mode")
         
-    def _cleanup_stale_sockets(self):
-        """Remove any leftover socket files from previous runs."""
+        # Test local connection if in local mode
+        if mode == SandboxMode.LOCAL:
+            self._test_local_connection()
+    
+    def _test_local_connection(self):
+        """Test connection to local sandbox"""
         try:
-            for file in os.listdir(self.base_dir):
-                if file.endswith('.socket'):
-                    socket_path = os.path.join(self.base_dir, file)
-                    try:
-                        os.remove(socket_path)
-                        logger.info(f"Cleaned up stale socket: {socket_path}")
-                    except Exception as e:
-                        logger.warning(f"Could not remove {socket_path}: {e}")
+            client = SandboxClient(self.local_url)
+            context = client.get_context()
+            logger.info(f"Successfully connected to local sandbox: {context}")
         except Exception as e:
-            logger.warning(f"Socket cleanup failed: {e}")
+            logger.warning(f"Cannot connect to local sandbox at {self.local_url}: {e}")
+            logger.warning("You may need to start the local sandbox first")
+    
+    def _start_docker_container(self, user_id: str, port: int = None) -> SandboxInfo:
+        """Start a new Docker container for online mode"""
+        if port is None: 
+            # Auto-assign port based on user_id
+            port = 8080 + (hash(user_id) % 1000)
+        
+        image = self.DOCKER_IMAGE_CN if self.use_china_mirror else self.DOCKER_IMAGE
+        container_name = f"localmanus-sandbox-{user_id}"
+        
+        # Check if container already exists
+        check_cmd = ["docker", "ps", "-a", "--filter", f"name={container_name}", "--format", "{{.ID}}"]
+        result = subprocess.run(check_cmd, capture_output=True, text=True)
+        
+        if result.stdout.strip():
+            container_id = result.stdout.strip()
+            logger.info(f"Container {container_name} already exists: {container_id}")
             
-    def cleanup_vm(self, user_id: str):
-        """Stop and cleanup a VM instance."""
-        if user_id not in self.vms:
-            logger.warning(f"No VM found for user {user_id}")
+            # Check if running
+            status_cmd = ["docker", "inspect", "-f", "{{.State.Running}}", container_id]
+            status = subprocess.run(status_cmd, capture_output=True, text=True)
+            
+            if status.stdout.strip() == "true":
+                logger.info(f"Container {container_name} is already running")
+            else:
+                # Start existing container
+                logger.info(f"Starting existing container {container_name}")
+                subprocess.run(["docker", "start", container_id], check=True)
+        else:
+            # Create and start new container
+            logger.info(f"Creating new container {container_name} on port {port}")
+            cmd = [
+                "docker", "run",
+                "--security-opt", "seccomp=unconfined",
+                "--name", container_name,
+                "-d",  # Detached mode
+                "-p", f"{port}:8080",
+                "--shm-size", "2gb",
+                image
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            container_id = result.stdout.strip()
+            logger.info(f"Started container {container_id} for user {user_id}")
+            
+            # Wait for container to be ready
+            time.sleep(3)
+        
+        base_url = f"http://localhost:{port}"
+        sandbox_info = SandboxInfo(
+            sandbox_id=user_id,
+            base_url=base_url,
+            mode=SandboxMode.ONLINE,
+            container_id=container_id,
+            vnc_url=f"{base_url}/vnc/index.html?autoconnect=true",
+            vscode_url=f"{base_url}/code-server/"
+        )
+        
+        # Get home directory
+        try:
+            client = SandboxClient(base_url)
+            context = client.get_context()
+            sandbox_info.home_dir = context.get('data', {}).get('home_dir', '/home/gem')
+        except Exception as e:
+            logger.warning(f"Could not get sandbox context: {e}")
+            sandbox_info.home_dir = '/home/gem'
+        
+        return sandbox_info
+    
+    def get_sandbox(self, user_id: str) -> SandboxInfo:
+        """Get or create sandbox for user"""
+        if user_id in self.sandboxes:
+            return self.sandboxes[user_id]
+        
+        if self.mode == SandboxMode.LOCAL:
+            # Use shared local sandbox
+            sandbox_info = SandboxInfo(
+                sandbox_id="local-shared",
+                base_url=self.local_url,
+                mode=SandboxMode.LOCAL,
+                vnc_url=f"{self.local_url}/vnc/index.html?autoconnect=true",
+                vscode_url=f"{self.local_url}/code-server/"
+            )
+            
+            # Get home directory
+            try:
+                client = SandboxClient(self.local_url)
+                context = client.get_context()
+                sandbox_info.home_dir = context.get('data', {}).get('home_dir', '/home/gem')
+            except Exception as e:
+                logger.warning(f"Could not get sandbox context: {e}")
+                sandbox_info.home_dir = '/home/gem'
+        else:
+            # Create new Docker container
+            sandbox_info = self._start_docker_container(user_id)
+        
+        self.sandboxes[user_id] = sandbox_info
+        return sandbox_info
+    
+    def get_client(self, user_id: str) -> SandboxClient:
+        """Get API client for user's sandbox"""
+        sandbox_info = self.get_sandbox(user_id)
+        return SandboxClient(sandbox_info.base_url)
+    
+    def execute_command(self, user_id: str, command: str, cwd: Optional[str] = None) -> Dict[str, Any]:
+        """Execute command in user's sandbox"""
+        client = self.get_client(user_id)
+        return client.exec_command(command, cwd)
+    
+    def cleanup_sandbox(self, user_id: str):
+        """Cleanup sandbox resources"""
+        if user_id not in self.sandboxes:
+            logger.warning(f"No sandbox found for user {user_id}")
             return
-            
-        vm = self.vms[user_id]
         
-        # Terminate process
-        if vm.process and vm.process.poll() is None:
-            vm.process.terminate()
+        sandbox_info = self.sandboxes[user_id]
+        
+        if sandbox_info.mode == SandboxMode.ONLINE and sandbox_info.container_id:
+            # Stop and remove Docker container
             try:
-                vm.process.wait(timeout=5)
+                logger.info(f"Stopping container {sandbox_info.container_id}")
+                subprocess.run(["docker", "stop", sandbox_info.container_id], 
+                             timeout=30, check=True)
+                subprocess.run(["docker", "rm", sandbox_info.container_id], check=True)
+                logger.info(f"Removed container for user {user_id}")
             except subprocess.TimeoutExpired:
-                vm.process.kill()
-                
-        # Remove socket file
-        if os.path.exists(vm.socket_path):
-            try:
-                os.remove(vm.socket_path)
-                logger.info(f"Removed socket: {vm.socket_path}")
+                logger.error(f"Timeout stopping container {sandbox_info.container_id}")
+                subprocess.run(["docker", "kill", sandbox_info.container_id])
+                subprocess.run(["docker", "rm", sandbox_info.container_id])
             except Exception as e:
-                logger.error(f"Failed to remove socket {vm.socket_path}: {e}")
-                
-        # Clean up chroot directory
-        if os.path.exists(vm.chroot_base):
-            try:
-                import shutil
-                shutil.rmtree(vm.chroot_base)
-                logger.info(f"Removed chroot: {vm.chroot_base}")
-            except Exception as e:
-                logger.error(f"Failed to remove chroot {vm.chroot_base}: {e}")
-                
-        del self.vms[user_id]
-        logger.info(f"Cleaned up VM for user {user_id}")
+                logger.error(f"Error cleaning up container: {e}")
+        
+        del self.sandboxes[user_id]
+        logger.info(f"Cleaned up sandbox for user {user_id}")
+    
+    def cleanup_all(self):
+        """Cleanup all sandbox resources"""
+        for user_id in list(self.sandboxes.keys()):
+            self.cleanup_sandbox(user_id)
 
-    def _setup_tap(self, tap_name: str, bridge_name: str = "br0"):
-        """Creates and configures a TAP device for the VM."""
-        try:
-            # Create TAP
-            subprocess.run(["sudo", "ip", "tuntap", "add", "dev", tap_name, "mode", "tap"], check=True)
-            # Add to bridge
-            subprocess.run(["sudo", "ip", "link", "set", tap_name, "master", bridge_name], check=True)
-            # Bring up
-            subprocess.run(["sudo", "ip", "link", "set", tap_name, "up"], check=True)
-            logger.info(f"Configured TAP device: {tap_name}")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to setup TAP {tap_name}: {e}")
+# Global Instance - Default to LOCAL mode for development
+# Change to ONLINE mode in production or when you need isolated containers
+try:
+    from core.config import SANDBOX_MODE, SANDBOX_LOCAL_URL, USE_CHINA_MIRROR
+    mode = SandboxMode.ONLINE if SANDBOX_MODE.lower() == 'online' else SandboxMode.LOCAL
+except ImportError:
+    mode = SandboxMode.LOCAL
+    SANDBOX_LOCAL_URL = os.getenv('SANDBOX_LOCAL_URL', 'http://192.168.126.131:8080')
+    USE_CHINA_MIRROR = os.getenv('USE_CHINA_MIRROR', 'false').lower() == 'true'
 
-    def start_vm(self, user_id: str) -> FirecrackerVM:
-        """
-        Starts a new Firecracker microVM for a user.
-        """
-        vm_id = f"vm_{user_id}_{int(time.time())}"
-        socket_path = os.path.join(self.base_dir, f"{vm_id}.socket")
-        chroot_base = os.path.join(self.base_dir, vm_id)
-        
-        os.makedirs(chroot_base, exist_ok=True)
-        
-        # Clean up any existing socket file
-        if os.path.exists(socket_path):
-            try:
-                os.remove(socket_path)
-                logger.info(f"Removed stale socket: {socket_path}")
-            except Exception as e:
-                logger.error(f"Failed to remove stale socket {socket_path}: {e}")
-        
-        # 1. Start Firecracker process
-        cmd = [self.bin_path, "--api-sock", socket_path]
-        try:
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except FileNotFoundError:
-            raise Exception(f"Firecracker binary not found at {self.bin_path}. Run firecracker_setup.sh first.")
-        except Exception as e:
-            raise Exception(f"Failed to start Firecracker process: {e}")
-        
-        vm = FirecrackerVM(vm_id, socket_path, chroot_base)
-        vm.process = process
-        
-        # Wait for socket to be ready
-        retries = 0
-        max_retries = 10
-        while not os.path.exists(socket_path) and retries < max_retries:
-            # Check if process is still running
-            if process.poll() is not None:
-                stderr_output = process.stderr.read().decode('utf-8') if process.stderr else ""
-                raise Exception(f"Firecracker process exited prematurely. Error: {stderr_output}")
-            time.sleep(0.2)
-            retries += 1
-            
-        if not os.path.exists(socket_path):
-            # Try to get error output
-            stderr_output = process.stderr.read().decode('utf-8') if process.stderr else "No error output"
-            raise Exception(f"Failed to start Firecracker: Socket not found after {max_retries} retries. Error: {stderr_output}")
+sandbox_manager = SandboxManager(
+    mode=mode,
+    local_url=SANDBOX_LOCAL_URL,
+    use_china_mirror=USE_CHINA_MIRROR
+)
 
-        # 2. Configure Boot Source
-        vm.api_put("boot-source", {
-            "kernel_image_path": self.kernel_path,
-            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off nomodules"
-        })
-
-        # 3. Configure Drive (RootFS)
-        vm.api_put("drives/rootfs", {
-            "drive_id": "rootfs",
-            "path_on_host": self.rootfs_path,
-            "is_root_device": True,
-            "is_read_only": False
-        })
-
-        # 4. Configure Network
-        tap_name = f"tap_{user_id}"
-        self._setup_tap(tap_name)
-        vm.api_put("network-interfaces/eth0", {
-            "iface_id": "eth0",
-            "guest_mac": "AA:FC:00:00:00:01",
-            "host_dev_name": tap_name
-        })
-
-        # 5. Start Instance
-        vm.api_action("InstanceStart")
-        
-        self.vms[user_id] = vm
-        logger.info(f"Started Firecracker VM for user {user_id}")
-        
-        # 6. Start VNC Proxy
-        self._start_vnc_proxy(vm, user_id)
-        
-        return vm
-
-    def _start_vnc_proxy(self, vm: FirecrackerVM, user_id: str):
-        """
-        Starts websockify to proxy VNC traffic.
-        """
-        proxy_port = 6080 + (int(user_id) % 1000 if user_id.isdigit() else 0)
-        vm.vnc_proxy_port = proxy_port
-        vm_ip = f"172.16.{int(user_id) % 254}.2" if user_id.isdigit() else "172.16.0.2"
-        vm.ip_address = vm_ip
-        
-        # Launch websockify in background
-        # websockify --web /usr/share/novnc/ {proxy_port} {vm_ip}:5900
-        logger.info(f"VNC Proxy for user {user_id} configured on port {proxy_port} -> {vm_ip}:5900")
-
-    def execute_in_vm(self, user_id: str, command: str) -> Dict[str, Any]:
-        """
-        Executes a command inside the VM.
-        """
-        if user_id not in self.vms:
-            self.start_vm(user_id)
-            
-        vm = self.vms[user_id]
-        logger.info(f"Executing command in VM {vm.vm_id}: {command}")
-        
-        return {
-            "stdout": f"Executed: {command} in MicroVM",
-            "stderr": "",
-            "exit_code": 0
-        }
-
-# Global Instance
-firecracker_manager = FirecrackerManager()
+# Legacy compatibility alias
+firecracker_manager = sandbox_manager

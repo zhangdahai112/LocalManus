@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from typing import Optional
 from core.skill_manager import BaseSkill
+from core.firecracker_sandbox import sandbox_manager
 from agentscope.tool import ToolResponse
 from agentscope.message import TextBlock
 
@@ -84,53 +85,78 @@ class FileOperationSkill(BaseSkill):
             error_msg = f"Error reading file: {str(e)}"
             return ToolResponse(content=[TextBlock(type="text", text=error_msg)])
 
-    def file_read(self, file_path: str) -> ToolResponse:
-        """Reads the content of a file.
+    def file_read(self, file_path: str, user_id: Optional[str] = None) -> ToolResponse:
+        """Reads the content of a file inside the user's sandbox.
 
         Args:
             file_path (str): Path to the file to read
+            user_id (str, optional): User ID to scope the operation to their sandbox
 
         Returns:
             ToolResponse: Content of the file or error message
         """
-        if not os.path.exists(file_path):
-            return ToolResponse(content=[TextBlock(type="text", text=f"Error: File {file_path} does not exist.")])
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            if user_id:
+                client = sandbox_manager.get_client(str(user_id))
+                content = client.read_file(file_path)
+            else:
+                # Fallback: host filesystem (upload paths only)
+                if not os.path.exists(file_path):
+                    return ToolResponse(content=[TextBlock(type="text", text=f"Error: File {file_path} does not exist.")])
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
             return ToolResponse(content=[TextBlock(type="text", text=content)])
         except Exception as e:
             return ToolResponse(content=[TextBlock(type="text", text=f"Error reading file: {str(e)}")])
 
-    def file_write(self, file_path: str, content: str) -> ToolResponse:
-        """Writes content to a file.
+    def file_write(self, file_path: str, content: str, user_id: Optional[str] = None) -> ToolResponse:
+        """Writes content to a file inside the user's sandbox.
 
         Args:
             file_path (str): Path to the file to write
             content (str): Content to write to the file
+            user_id (str, optional): User ID to scope the operation to their sandbox
 
         Returns:
             ToolResponse: Success message or error message
         """
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
+            if user_id:
+                client = sandbox_manager.get_client(str(user_id))
+                client.write_file(file_path, content)
+            else:
+                # Fallback: host filesystem
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
             return ToolResponse(content=[TextBlock(type="text", text=f"Successfully wrote to {file_path}")])
         except Exception as e:
             return ToolResponse(content=[TextBlock(type="text", text=f"Error writing file: {str(e)}")])
 
-    def directory_list(self, directory: str = ".") -> ToolResponse:
-        """Lists contents of a directory.
+    def directory_list(self, directory: str = ".", user_id: Optional[str] = None) -> ToolResponse:
+        """Lists contents of a directory inside the user's sandbox.
 
         Args:
             directory (str): Path to the directory to list (default: current directory)
+            user_id (str, optional): User ID to scope the operation to their sandbox
 
         Returns:
             ToolResponse: List of directory contents or error message
         """
         try:
-            items = os.listdir(directory)
-            content = "\n".join(items)
+            if user_id:
+                client = sandbox_manager.get_client(str(user_id))
+                files = client.list_files(directory)
+                if isinstance(files, list):
+                    content = "\n".join([
+                        f.get('name', str(f)) if isinstance(f, dict) else str(f)
+                        for f in files
+                    ])
+                else:
+                    content = str(files)
+            else:
+                # Fallback: host filesystem
+                items = os.listdir(directory)
+                content = "\n".join(items)
             return ToolResponse(content=[TextBlock(type="text", text=content)])
         except Exception as e:
             return ToolResponse(content=[TextBlock(type="text", text=f"Error listing directory: {str(e)}")])
@@ -143,17 +169,17 @@ class FileOps(BaseSkill):
         super().__init__()
         self.file_operation_skill = FileOperationSkill()
 
-    def read_file(self, file_path: str) -> ToolResponse:
+    def read_file(self, file_path: str, user_id: Optional[str] = None) -> ToolResponse:
         """Reads the content of a file."""
-        return self.file_operation_skill.file_read(file_path)
+        return self.file_operation_skill.file_read(file_path, user_id)
 
-    def write_file(self, file_path: str, content: str) -> ToolResponse:
+    def write_file(self, file_path: str, content: str, user_id: Optional[str] = None) -> ToolResponse:
         """Writes content to a file."""
-        return self.file_operation_skill.file_write(file_path, content)
+        return self.file_operation_skill.file_write(file_path, content, user_id)
 
-    def list_dir(self, directory: str = ".") -> ToolResponse:
+    def list_dir(self, directory: str = ".", user_id: Optional[str] = None) -> ToolResponse:
         """Lists contents of a directory."""
-        return self.file_operation_skill.directory_list(directory)
+        return self.file_operation_skill.directory_list(directory, user_id)
 
     def list_user_files(self, user_id: int) -> ToolResponse:
         """Lists all files uploaded by a specific user."""

@@ -1,74 +1,45 @@
-import os
-import subprocess
 import logging
-import uuid
-import shutil
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 logger = logging.getLogger("LocalManus-Sandbox")
 
-class SandboxManager:
-    """
-    Manages isolated environments for project generation and code execution.
-    In a real-world scenario, this would interface with Docker or Firecracker.
-    For local development, we'll use unique directories.
-    """
-    BASE_SANDBOX_DIR = "sandboxes"
+# Delegate to the unified SandboxManager in firecracker_sandbox
+# This file is kept for backward compatibility only
+from core.firecracker_sandbox import sandbox_manager, SandboxManager, SandboxMode, SandboxClient, SandboxInfo
 
-    def __init__(self):
-        if not os.path.exists(self.BASE_SANDBOX_DIR):
-            os.makedirs(self.BASE_SANDBOX_DIR)
+
+class LegacySandboxAdapter:
+    """
+    Thin adapter that wraps sandbox_manager and normalises return values
+    to the old {stdout, stderr, exit_code} dict format expected by any
+    code that still imports from core.sandbox directly.
+    """
 
     def create_sandbox(self, user_id: str) -> str:
-        """
-        Creates a dedicated sandbox directory for a user.
-        """
-        sandbox_path = os.path.join(self.BASE_SANDBOX_DIR, str(user_id))
-        if not os.path.exists(sandbox_path):
-            os.makedirs(sandbox_path)
-            logger.info(f"Created sandbox for user {user_id} at {sandbox_path}")
-        return os.path.abspath(sandbox_path)
+        """Returns home_dir of the user sandbox."""
+        info = sandbox_manager.get_sandbox(str(user_id))
+        return info.home_dir or "/home/gem"
 
     def execute_command(self, user_id: str, command: str, cwd: str = None) -> Dict[str, Any]:
         """
-        Executes a command inside the user's sandbox.
+        Executes a command in the sandbox and returns legacy-format dict.
         """
-        sandbox_path = self.create_sandbox(user_id)
-        execution_cwd = cwd if cwd else sandbox_path
-        
-        # Ensure execution_cwd is within sandbox_path for security
-        if not os.path.abspath(execution_cwd).startswith(os.path.abspath(sandbox_path)):
-             execution_cwd = sandbox_path
-
         try:
-            logger.info(f"Executing command in sandbox {user_id}: {command}")
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=execution_cwd,
-                text=True
-            )
-            stdout, stderr = process.communicate(timeout=300) # 5 min timeout
-            
-            return {
-                "stdout": stdout,
-                "stderr": stderr,
-                "exit_code": process.returncode
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "stdout": "",
-                "stderr": "Command timed out after 5 minutes.",
-                "exit_code": -1
-            }
+            result = sandbox_manager.execute_command(str(user_id), command, cwd)
+            output = result.get("data", {}).get("output", "")
+            exit_code = result.get("data", {}).get("exit_code", 0)
+            return {"stdout": output, "stderr": "", "exit_code": exit_code}
         except Exception as e:
-            return {
-                "stdout": "",
-                "stderr": f"Error executing command: {str(e)}",
-                "exit_code": -1
-            }
+            logger.error(f"LegacySandboxAdapter.execute_command error: {e}")
+            return {"stdout": "", "stderr": str(e), "exit_code": -1}
 
-# Global Instance
-sandbox_manager = SandboxManager()
+
+# Global instance — same interface as the old sandbox_manager
+# but now backed by the real sandbox API
+legacy_sandbox = LegacySandboxAdapter()
+
+# Keep old name working for any code that does:
+#   from core.sandbox import sandbox_manager
+# (points to the real SandboxManager, not the legacy adapter)
+__all__ = ["sandbox_manager", "legacy_sandbox", "SandboxManager", "SandboxMode", "SandboxClient", "SandboxInfo"]
+
