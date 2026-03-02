@@ -11,3 +11,4 @@ beautifulsoup4
 python-jose[cryptography]
 passlib[bcrypt]
 sqlmodel
+playwright

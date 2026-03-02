@@ -91,6 +91,11 @@ class SandboxClient:
         """Get browser CDP URL and info"""
         return self._request('GET', '/v1/browser/info')
     
+    def browser_execute_action(self, action_type: str, **params) -> Dict[str, Any]:
+        """Execute a GUI action in the sandbox browser (click, type, scroll, etc.)"""
+        payload = {"action": {"type": action_type, **params}}
+        return self._request('POST', '/v1/browser/action', json=payload)
+    
     def execute_jupyter_code(self, code: str) -> Dict[str, Any]:
         """Execute Python code in Jupyter kernel"""
         return self._request('POST', '/v1/jupyter/execute', json={'code': code})
