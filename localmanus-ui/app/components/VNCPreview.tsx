@@ -34,18 +34,29 @@ export default function VNCPreview({ isChatMode }: VNCPreviewProps) {
         if (response.ok) {
           const result = await response.json();
           // Handle both formats: { data: { vnc_url } } or { vnc_url }
-          const vnc = result.data?.vnc_url || result.vnc_url || `${baseUrl.replace(':8000', ':8080')}/vnc/index.html?autoconnect=true`;
-          setVncUrl(vnc);
+          const vncUrlFromApi = result.data?.vnc_url || result.vnc_url;
+          
+          if (vncUrlFromApi) {
+            // In production, VNC is proxied through nginx at /vnc/
+            // Replace the direct sandbox URL with the proxied path
+            const isProduction = process.env.NODE_ENV === 'production';
+            if (isProduction || window.location.port === '1243') {
+              // Use relative path for VNC (proxied through nginx)
+              setVncUrl('/vnc/index.html?autoconnect=true');
+            } else {
+              setVncUrl(vncUrlFromApi);
+            }
+          } else {
+            setVncUrl('/vnc/index.html?autoconnect=true');
+          }
         } else {
-          // Fallback to default VNC URL
-          const defaultVncUrl = `${window.location.protocol}//${window.location.hostname}:8080/vnc/index.html?autoconnect=true`;
-          setVncUrl(defaultVncUrl);
+          // Fallback to proxied VNC URL
+          setVncUrl('/vnc/index.html?autoconnect=true');
         }
       } catch (err) {
         console.error('Failed to fetch VNC URL:', err);
-        // Fallback to default
-        const defaultVncUrl = `${window.location.protocol}//${window.location.hostname}:8080/vnc/index.html?autoconnect=true`;
-        setVncUrl(defaultVncUrl);
+        // Fallback to proxied VNC URL
+        setVncUrl('/vnc/index.html?autoconnect=true');
         setError('Using default VNC URL');
       } finally {
         setIsLoading(false);
