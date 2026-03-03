@@ -470,6 +470,49 @@ async def websocket_task_stream(websocket: WebSocket, trace_id: str):
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for trace_id: {trace_id}")
 
+from core.firecracker_sandbox import sandbox_manager
+
+
+@app.get("/api/sandbox/info")
+async def get_sandbox_info(current_user: User = Depends(get_current_user)):
+    """
+    Get sandbox information for the current user, including VNC connection URL.
+    
+    This endpoint returns the sandbox details needed for the frontend VNC preview panel,
+    including the VNC URL, VSCode URL, and sandbox mode.
+    
+    Returns:
+        dict: Sandbox information containing:
+            - sandbox_id: Unique sandbox identifier
+            - base_url: Sandbox base URL
+            - vnc_url: VNC viewer URL for browser preview
+            - vscode_url: VSCode Server URL
+            - mode: Sandbox mode (local or online)
+            - home_dir: User's home directory in sandbox
+    """
+    try:
+        # Get or create sandbox for the current user
+        sandbox_info = sandbox_manager.get_sandbox(str(current_user.id))
+        
+        return {
+            "status": "success",
+            "data": {
+                "sandbox_id": sandbox_info.sandbox_id,
+                "base_url": sandbox_info.base_url,
+                "vnc_url": sandbox_info.vnc_url,
+                "vscode_url": sandbox_info.vscode_url,
+                "mode": sandbox_info.mode.value,
+                "home_dir": sandbox_info.home_dir
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get sandbox info for user {current_user.id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get sandbox information: {str(e)}"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -6,6 +6,7 @@ import Omnibox from './components/Omnibox';
 import Toolbox from './components/Toolbox';
 import UserStatus from './components/UserStatus';
 import MarkdownRenderer from './components/MarkdownRenderer';
+import VNCPreview from './components/VNCPreview';
 import { getApiBaseUrl } from './utils/api';
 import { Plus, User, Bot, Wrench, Search, Eye, Zap, FileText, Palette, BookOpen, BarChart3, Globe, Languages, PlayCircle, Mic } from 'lucide-react';
 import styles from './page.module.css';
@@ -178,7 +179,10 @@ export default function Home() {
         <UserStatus />
       </div>
 
-      <div className={styles.content} ref={contentRef}>
+      {/* VNC Preview Panel - only visible in chat mode */}
+      <VNCPreview isChatMode={isChatMode} />
+
+      <div className={`${styles.content} ${isChatMode ? styles.withVNC : ''}`} ref={contentRef}>
         <div className={styles.container}>
           <header className={styles.header}>
             <h1 className={styles.title}>今天可以帮你做什么？</h1>
