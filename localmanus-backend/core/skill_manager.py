@@ -2,10 +2,70 @@ import importlib
 import inspect
 import os
 import logging
+import asyncio
+from contextvars import ContextVar
 from typing import Dict, Any, List, Optional
 from agentscope.tool import Toolkit, ToolResponse
+from agentscope.message import ToolUseBlock
 
 logger = logging.getLogger("LocalManus-SkillManager")
+
+# Context variable to store user context per async task
+# This ensures thread-safety and isolation between concurrent requests
+_user_context_var: ContextVar[Optional[Dict]] = ContextVar('user_context', default=None)
+
+class UserContextToolkit(Toolkit):
+    """
+    Custom Toolkit that injects user_context into tool function calls.
+    Uses context variables for async-safe per-request context isolation.
+    """
+    
+    async def call_tool_function(self, tool_block: ToolUseBlock):
+        """
+        Override to inject user_id/user_context into tool calls.
+        Retrieves context from ContextVar for async-safe isolation.
+        """
+        tool_name = tool_block.name
+        tool_input = dict(tool_block.input) if tool_block.input else {}
+        
+        if tool_name not in self.tools:
+            yield ToolResponse(
+                name=tool_name,
+                content=[f"Error: Tool '{tool_name}' not found."],
+                role="tool"
+            )
+            return
+        
+        # Get the original function
+        tool_wrapper = self.tools[tool_name]
+        original_func = tool_wrapper.original_func
+        
+        # Check function signature for user_id or user_context parameters
+        sig = inspect.signature(original_func)
+        
+        # Get user context from ContextVar (async-safe)
+        user_context = _user_context_var.get()
+        
+        # Inject user_id if the function accepts it
+        if "user_id" in sig.parameters and user_context:
+            tool_input["user_id"] = str(user_context.get("id", ""))
+        
+        # Inject user_context if the function accepts it
+        if "user_context" in sig.parameters:
+            tool_input["user_context"] = user_context or {}
+        
+        # Create updated tool block with injected parameters
+        updated_block = ToolUseBlock(
+            type=tool_block.type,
+            id=tool_block.id,
+            name=tool_name,
+            input=tool_input
+        )
+        
+        # Call parent implementation with updated block
+        async for response in super().call_tool_function(updated_block):
+            yield response
+
 
 class BaseSkill:
     """
@@ -23,7 +83,7 @@ class SkillManager:
     def __init__(self, skills_dir: str = "skills"):
         # The skills_dir is relative to the backend root (main.py location)
         self.skills_dir = skills_dir
-        self.toolkit = Toolkit()
+        self.toolkit = UserContextToolkit()  # Use custom toolkit with user context injection
         self._load_skills()
 
     def _load_skills(self):
@@ -132,6 +192,19 @@ class SkillManager:
         except Exception as e:
             logger.error(f"Error executing tool {tool_name}: {e}")
             return f"Error: {str(e)}"
+
+    def set_user_context(self, user_context: Optional[Dict]):
+        """
+        Set the current user context for the current async task.
+        Uses ContextVar for async-safe isolation between concurrent requests.
+        """
+        _user_context_var.set(user_context)
+        logger.debug(f"Set user context for task: {user_context}")
+
+    def clear_user_context(self):
+        """Clear the user context for the current async task."""
+        _user_context_var.set(None)
+        logger.debug("Cleared user context for task")
 
     def list_all_tools(self) -> List[Dict[str, Any]]:
         """Compatibility method for existing ReActAgent."""

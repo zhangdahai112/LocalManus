@@ -41,6 +41,10 @@ class Orchestrator:
         history.append(user_msg)
         
         try:
+            # Set user context for skill execution
+            from core.agent_manager import agent_lifecycle
+            agent_lifecycle.skill_manager.set_user_context(user_context)
+            
             # 3. Prepare message list for the LLM
             # Convert history to Msg objects if needed
             msg_history = []
@@ -93,6 +97,10 @@ class Orchestrator:
             logger.error(f"Error in orchestrated chat_stream: {str(e)}", exc_info=True)
             error_msg = f"\n[Error]: {str(e)}"
             yield f"data: {json.dumps({'content': error_msg}, ensure_ascii=False)}\n\n"
+        finally:
+            # Clear user context after execution
+            from core.agent_manager import agent_lifecycle
+            agent_lifecycle.skill_manager.clear_user_context()
 
     async def run_workflow(self, user_input: str):
         """
