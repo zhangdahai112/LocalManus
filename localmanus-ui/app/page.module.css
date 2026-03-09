@@ -35,9 +35,10 @@
   padding: 40px 0 320px 0; /* Increased to 320px to ensure latest messages are not covered by Omnibox */
 }
 
-/* Content with VNC panel - adjust for right panel */
+/* Content with VNC panel - dynamic adjustment */
 .withVNC {
-  margin-right: 480px; /* Default expanded VNC panel width */
+  margin-right: 600px; /* Default expanded VNC panel width */
+  transition: margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .chatMode.withVNC {
@@ -60,10 +61,10 @@
   position: fixed;
   bottom: 0;
   left: var(--sidebar-width);
-  right: 480px; /* Adjust for VNC panel default width */
+  right: 600px; /* Default VNC panel width */
   display: flex;
   justify-content: center;
-  padding: 40px 80px 50px 80px; /* Generous padding */
+  padding: 40px 80px 50px 80px;
   background: linear-gradient(to top, 
     #fcfcfc 0%, 
     #fcfcfc 60%, 
@@ -71,13 +72,12 @@
     rgba(252, 252, 252, 0) 100%
   );
   z-index: 50;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
 }
 
 /* When VNC panel is collapsed or in home mode, omnibox takes full width */
-.main:not(.chatMode) .fixedOmnibox,
-.main:has(.collapsedContainer) .fixedOmnibox {
+.main:not(.chatMode) .fixedOmnibox {
   right: 0;
 }
 

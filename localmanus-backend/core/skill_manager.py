@@ -24,17 +24,29 @@ class UserContextToolkit(Toolkit):
         """
         Override to inject user_id/user_context into tool calls.
         Retrieves context from ContextVar for async-safe isolation.
+        
+        Note: This method must return a list (not a generator) to be compatible
+        with AgentScope's ReActAgent._acting method which uses `await`.
         """
-        tool_name = tool_block.name
-        tool_input = dict(tool_block.input) if tool_block.input else {}
+        # Handle both dict and ToolUseBlock object formats
+        if isinstance(tool_block, dict):
+            tool_name = tool_block.get("name") or tool_block.get("function", {}).get("name", "unknown")
+            tool_input = dict(tool_block.get("input", {})) if tool_block.get("input") else {}
+            tool_type = tool_block.get("type", "tool_use")
+            tool_id = tool_block.get("id", f"tool_{tool_name}")
+        else:
+            # ToolUseBlock object
+            tool_name = getattr(tool_block, "name", "unknown")
+            tool_input = dict(getattr(tool_block, "input", {})) if getattr(tool_block, "input", None) else {}
+            tool_type = getattr(tool_block, "type", "tool_use")
+            tool_id = getattr(tool_block, "id", f"tool_{tool_name}")
         
         if tool_name not in self.tools:
-            yield ToolResponse(
+            return [ToolResponse(
                 name=tool_name,
                 content=[f"Error: Tool '{tool_name}' not found."],
                 role="tool"
-            )
-            return
+            )]
         
         # Get the original function
         tool_wrapper = self.tools[tool_name]
@@ -56,15 +68,22 @@ class UserContextToolkit(Toolkit):
         
         # Create updated tool block with injected parameters
         updated_block = ToolUseBlock(
-            type=tool_block.type,
-            id=tool_block.id,
+            type=tool_type,
+            id=tool_id,
             name=tool_name,
             input=tool_input
         )
         
-        # Call parent implementation with updated block
-        async for response in super().call_tool_function(updated_block):
-            yield response
+        # Call parent implementation and collect all responses
+        # Must return a list, not a generator, for AgentScope compatibility
+        # Note: Parent's call_tool_function returns a coroutine that resolves to a list
+        responses = await super().call_tool_function(updated_block)
+        
+        # Ensure we always return a list
+        if not isinstance(responses, list):
+            responses = [responses] if responses else []
+        
+        return responses
 
 
 class BaseSkill:
