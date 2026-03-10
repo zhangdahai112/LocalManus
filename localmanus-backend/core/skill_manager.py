@@ -6,7 +6,7 @@ import asyncio
 from contextvars import ContextVar
 from typing import Dict, Any, List, Optional
 from agentscope.tool import Toolkit, ToolResponse
-from agentscope.message import ToolUseBlock
+from agentscope.message import ToolUseBlock, TextBlock
 
 logger = logging.getLogger("LocalManus-SkillManager")
 
@@ -25,8 +25,9 @@ class UserContextToolkit(Toolkit):
         Override to inject user_id/user_context into tool calls.
         Retrieves context from ContextVar for async-safe isolation.
         
-        Note: This method must return a list (not a generator) to be compatible
-        with AgentScope's ReActAgent._acting method which uses `await`.
+        Returns:
+            `AsyncGenerator[ToolResponse, None]`: An async generator that yields
+            tool response chunks from the parent implementation.
         """
         # Handle both dict and ToolUseBlock object formats
         if isinstance(tool_block, dict):
@@ -42,11 +43,16 @@ class UserContextToolkit(Toolkit):
             tool_id = getattr(tool_block, "id", f"tool_{tool_name}")
         
         if tool_name not in self.tools:
-            return [ToolResponse(
-                name=tool_name,
-                content=[f"Error: Tool '{tool_name}' not found."],
-                role="tool"
-            )]
+            # Return an async generator that yields the error response
+            async def _error_gen():
+                yield ToolResponse(
+                    content=[TextBlock(
+                        type="text",
+                        text=f"Error: Tool '{tool_name}' not found."
+                    )],
+                    role="tool"
+                )
+            return _error_gen()
         
         # Get the original function
         tool_wrapper = self.tools[tool_name]
@@ -74,16 +80,9 @@ class UserContextToolkit(Toolkit):
             input=tool_input
         )
         
-        # Call parent implementation and collect all responses
-        # Must return a list, not a generator, for AgentScope compatibility
-        # Note: Parent's call_tool_function returns a coroutine that resolves to a list
-        responses = await super().call_tool_function(updated_block)
-        
-        # Ensure we always return a list
-        if not isinstance(responses, list):
-            responses = [responses] if responses else []
-        
-        return responses
+        # Await the parent's coroutine to get the async generator, then return it
+        # Parent's call_tool_function is a coroutine that resolves to an async generator
+        return await super().call_tool_function(updated_block)
 
 
 class BaseSkill:
@@ -166,7 +165,7 @@ class SkillManager:
                     except Exception as e:
                         logger.error(f"Failed to load tools from {file_path}: {e}")
 
-    async def execute_tool(self, tool_name: str, user_context: Dict = None, **kwargs) -> Any:
+    async def execute_tool(self, tool_name: str, user_context: Optional[Dict] = None, **kwargs) -> Any:
         """
         Executes a registered tool function using AgentScope's toolkit.
         """
@@ -192,11 +191,11 @@ class SkillManager:
                 input=kwargs
             )
             
-            response_generator = await self.toolkit.call_tool_function(tool_block)
-            
-            # Collect all responses from the generator
+            # Collect all responses from the async generator
+            # First await to get the generator, then iterate
             responses = []
-            async for response in response_generator:
+            gen = await self.toolkit.call_tool_function(tool_block)
+            async for response in gen:
                 if isinstance(response, ToolResponse):
                     responses.extend(response.content)
                 else:

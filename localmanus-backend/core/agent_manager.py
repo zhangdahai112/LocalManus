@@ -1,7 +1,7 @@
 import agentscope
 import os
 from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIChatFormatter
+from core.moonshot_formatter import MoonshotChatFormatter
 from agentscope.memory import InMemoryMemory
 from agents.base_agents import ManagerAgent, PlannerAgent
 from agents.react_agent import ReActAgent
@@ -17,15 +17,18 @@ class AgentLifecycleManager:
         model_config = AGENT_MODEL_CONFIGS[0] if AGENT_MODEL_CONFIGS else {}
         
         # Instantiate model using config (with env var fallbacks)
+        # Note: extra_body for reasoning_split is not directly supported by AgentScope's
+        # OpenAIChatModel. If thinking mode causes issues, use a model without thinking.
         self.model = OpenAIChatModel(
             model_name=model_config.get("model_name", os.getenv("MODEL_NAME", "gpt-4")),
             api_key=model_config.get("api_key", os.getenv("OPENAI_API_KEY", "EMPTY")),
-            streaming=True,
+            stream=True,
             client_kwargs={"base_url": model_config.get("base_url", os.getenv("OPENAI_API_BASE", "http://localhost:11434/v1"))},
         )
         
-        # Instantiate formatters and memory for AgentScope 1.0
-        self.formatter = OpenAIChatFormatter()
+        # Use Moonshot-compatible formatter that preserves reasoning_content
+        # for thinking-enabled models (e.g., Moonshot/Kimi)
+        self.formatter = MoonshotChatFormatter()
         
         # Initialize skill manager
         self.skill_manager = SkillManager()

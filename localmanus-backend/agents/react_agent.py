@@ -16,6 +16,18 @@ from core.prompts import REACT_AGENT_SYSTEM_PROMPT
 
 logger = logging.getLogger("LocalManus-ReActAgent")
 
+# Global callback for streaming thinking content
+_thinking_callback = None
+
+def set_thinking_callback(callback):
+    """Set a callback function to receive thinking content stream.
+    
+    Args:
+        callback: A function that receives thinking content chunks
+    """
+    global _thinking_callback
+    _thinking_callback = callback
+
 
 class ReActAgent(ASReActAgent):
     """Standardized ReAct Agent following AgentScope patterns."""
@@ -239,7 +251,7 @@ class ReActAgent(ASReActAgent):
         except Exception as e:
             return f"Error executing tool: {str(e)}"
 
-    async def run_with_context(self, user_input: str, user_context: Dict = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def run_with_context(self, user_input: str, user_context: Optional[Dict] = None) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Alternative method name for compatibility with existing code.
         """
@@ -247,3 +259,131 @@ class ReActAgent(ASReActAgent):
         messages = [{"role": "user", "content": user_input}]
         async for chunk in self.run_stream(messages):
             yield chunk
+
+    async def _reasoning(self, tool_choice: str | None = None) -> Msg:
+        """Override _reasoning to stream thinking content to frontend.
+        
+        This method wraps the parent _reasoning and intercepts the streaming
+        response to extract and forward thinking content.
+        """
+        global _thinking_callback
+        
+        # Import necessary modules from AgentScope
+        from agentscope.agent._react_agent import _MemoryMark
+        from agentscope.message import ToolResultBlock
+        
+        # Handle plan notebook hints (from parent implementation)
+        if self.plan_notebook:
+            # Insert the reasoning hint from the plan notebook
+            hint_msg = await self.plan_notebook.get_current_hint()
+            if self.print_hint_msg and hint_msg:
+                await self.print(hint_msg)
+            await self.memory.add(hint_msg, marks=_MemoryMark.HINT)
+
+        # Convert Msg objects into the required format of the model API
+        prompt = await self.formatter.format(
+            msgs=[
+                Msg("system", self.sys_prompt, "system"),
+                *await self.memory.get_memory(),
+            ],
+        )
+        # Clear the hint messages after use
+        await self.memory.delete_by_mark(mark=_MemoryMark.HINT)
+
+        res = await self.model(
+            prompt,
+            tools=self.toolkit.get_json_schemas(),
+            tool_choice=tool_choice,
+        )
+
+        # handle output from the model
+        interrupted_by_user = False
+        msg = None
+
+        # TTS model context manager
+        from agentscope.agent._utils import _AsyncNullContext
+        tts_context = self.tts_model or _AsyncNullContext()
+        speech = None
+
+        try:
+            async with tts_context:
+                msg = Msg(name=self.name, content=[], role="assistant")
+                if self.model.stream:
+                    async for content_chunk in res:
+                        msg.content = content_chunk.content
+                        
+                        # Stream thinking content to frontend if callback is set
+                        if _thinking_callback and hasattr(content_chunk, 'content'):
+                            for block in content_chunk.content:
+                                if hasattr(block, 'type') and block.type == 'thinking':
+                                    thinking_text = getattr(block, 'text', '')
+                                    if thinking_text:
+                                        await _thinking_callback(thinking_text)
+                                elif isinstance(block, dict) and block.get('type') == 'thinking':
+                                    thinking_text = block.get('text', '')
+                                    if thinking_text:
+                                        await _thinking_callback(thinking_text)
+
+                        # The speech generated from multimodal (audio) models
+                        speech = msg.get_content_blocks("audio") or None
+
+                        # Push to TTS model if available
+                        if (
+                            self.tts_model
+                            and self.tts_model.supports_streaming_input
+                        ):
+                            tts_res = await self.tts_model.push(msg)
+                            speech = tts_res.content
+
+                        await self.print(msg, False, speech=speech)
+
+                else:
+                    msg.content = list(res.content)
+
+                if self.tts_model:
+                    # Push to TTS model and block to receive the full speech
+                    # synthesis result
+                    tts_res = await self.tts_model.synthesize(msg)
+                    if self.tts_model.stream:
+                        async for tts_chunk in tts_res:
+                            speech = tts_chunk.content
+                            await self.print(msg, False, speech=speech)
+                    else:
+                        speech = tts_res.content
+
+                await self.print(msg, True, speech=speech)
+
+                # Add a tiny sleep to yield the last message object in the
+                # message queue
+                await asyncio.sleep(0.001)
+
+        except asyncio.CancelledError as e:
+            interrupted_by_user = True
+            raise e from None
+
+        finally:
+            # None will be ignored by the memory
+            await self.memory.add(msg)
+
+            # Post-process for user interruption
+            if interrupted_by_user and msg:
+                # Fake tool results
+                tool_use_blocks = msg.get_content_blocks("tool_use")
+                for tool_call in tool_use_blocks:
+                    msg_res = Msg(
+                        "system",
+                        [
+                            ToolResultBlock(
+                                type="tool_result",
+                                id=tool_call["id"],
+                                name=tool_call["name"],
+                                output="The tool call has been interrupted "
+                                "by the user.",
+                            ),
+                        ],
+                        "system",
+                    )
+                    await self.memory.add(msg_res)
+                    await self.print(msg_res, True)
+            
+            return msg

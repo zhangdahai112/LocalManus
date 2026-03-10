@@ -96,6 +96,14 @@ class FileOperationSkill(BaseSkill):
             ToolResponse: Content of the file or error message
         """
         try:
+            # If path starts with 'skills', read from local filesystem directly
+            if file_path.startswith("skills"):
+                if not os.path.exists(file_path):
+                    return ToolResponse(content=[TextBlock(type="text", text=f"Error: File {file_path} does not exist.")])
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return ToolResponse(content=[TextBlock(type="text", text=content)])
+            
             if user_id:
                 client = sandbox_manager.get_client(str(user_id))
                 content = client.read_file(file_path)
