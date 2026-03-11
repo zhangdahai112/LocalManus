@@ -121,7 +121,7 @@ class SandboxClient:
 class SandboxManager:
     """
     Unified Sandbox Manager supporting both Local and Online modes.
-    - Local Mode: Connect to pre-existing sandbox at http://192.168.96.135:8080
+    - Local Mode: Connect to pre-existing sandbox at http://192.168.126.132:8080
     - Online Mode: Spin up new Docker containers on demand
     """
     DOCKER_IMAGE = "ghcr.io/agent-infra/sandbox:latest"
@@ -129,7 +129,7 @@ class SandboxManager:
     
     def __init__(self, 
                  mode: SandboxMode = SandboxMode.LOCAL,
-                 local_url: str = "http://192.168.96.135:8080",
+                 local_url: str = "http://192.168.126.132:8080",
                  use_china_mirror: bool = False):
         self.mode = mode
         self.local_url = local_url
@@ -298,7 +298,7 @@ try:
     mode = SandboxMode.ONLINE if SANDBOX_MODE.lower() == 'online' else SandboxMode.LOCAL
 except ImportError:
     mode = SandboxMode.LOCAL
-    SANDBOX_LOCAL_URL = os.getenv('SANDBOX_LOCAL_URL', 'http://192.168.96.135:8080')
+    SANDBOX_LOCAL_URL = os.getenv('SANDBOX_LOCAL_URL', 'http://192.168.126.132:8080')
     USE_CHINA_MIRROR = os.getenv('USE_CHINA_MIRROR', 'false').lower() == 'true'
 
 sandbox_manager = SandboxManager(

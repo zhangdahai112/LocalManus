@@ -27,7 +27,7 @@ SandboxManager → [Local Mode] → HTTP API → Shared Sandbox
 ## Two Modes
 
 ### 1. LOCAL Mode (Development/Shared)
-- **Connect to**: Existing sandbox at `http://192.168.96.135:8080`
+- **Connect to**: Existing sandbox at `http://192.168.126.132:8080`
 - **Use when**: Development, testing, shared environment
 - **Benefits**: No container overhead, instant access, shared resources
 - **Limitations**: Shared environment (not isolated per user)
@@ -47,7 +47,7 @@ SandboxManager → [Local Mode] → HTTP API → Shared Sandbox
 SANDBOX_MODE=local
 
 # Local sandbox URL (when mode=local)
-SANDBOX_LOCAL_URL=http://192.168.96.135:8080
+SANDBOX_LOCAL_URL=http://192.168.126.132:8080
 
 # Use China mirror for Docker images (when mode=online)
 USE_CHINA_MIRROR=false
@@ -61,7 +61,7 @@ from core.firecracker_sandbox import SandboxManager, SandboxMode
 # Local mode
 manager = SandboxManager(
     mode=SandboxMode.LOCAL,
-    local_url="http://192.168.96.135:8080"
+    local_url="http://192.168.126.132:8080"
 )
 
 # Online mode
@@ -94,7 +94,7 @@ sandbox_manager.cleanup_sandbox("123")
 ```python
 from core.firecracker_sandbox import SandboxClient
 
-client = SandboxClient("http://192.168.96.135:8080")
+client = SandboxClient("http://192.168.126.132:8080")
 
 # Get context
 context = client.get_context()
@@ -204,7 +204,7 @@ class SandboxInfo:
    ```bash
    # In .env
    SANDBOX_MODE=local
-   SANDBOX_LOCAL_URL=http://192.168.96.135:8080
+   SANDBOX_LOCAL_URL=http://192.168.126.132:8080
    ```
 
 3. **Test connection**:
@@ -264,7 +264,7 @@ class SandboxInfo:
 ### Cannot connect to local sandbox
 ```bash
 # Check if sandbox is running
-curl http://192.168.96.135:8080/v1/sandbox
+curl http://192.168.126.132:8080/v1/sandbox
 
 # Start if not running
 docker run --security-opt seccomp=unconfined \

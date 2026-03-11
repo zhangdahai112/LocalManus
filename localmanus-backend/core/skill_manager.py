@@ -43,16 +43,14 @@ class UserContextToolkit(Toolkit):
             tool_id = getattr(tool_block, "id", f"tool_{tool_name}")
         
         if tool_name not in self.tools:
-            # Return an async generator that yields the error response
-            async def _error_gen():
-                yield ToolResponse(
-                    content=[TextBlock(
-                        type="text",
-                        text=f"Error: Tool '{tool_name}' not found."
-                    )],
-                    role="tool"
-                )
-            return _error_gen()
+            # Return a list with error response (AgentScope expects a list, not async generator)
+            return [ToolResponse(
+                content=[TextBlock(
+                    type="text",
+                    text=f"Error: Tool '{tool_name}' not found."
+                )],
+                role="tool"
+            )]
         
         # Get the original function
         tool_wrapper = self.tools[tool_name]
@@ -80,9 +78,13 @@ class UserContextToolkit(Toolkit):
             input=tool_input
         )
         
-        # Await the parent's coroutine to get the async generator, then return it
-        # Parent's call_tool_function is a coroutine that resolves to an async generator
-        return await super().call_tool_function(updated_block)
+        # AgentScope's _acting method expects a list, not an async generator
+        # We need to collect all responses and return them as a list
+        gen = await super().call_tool_function(updated_block)
+        responses = []
+        async for response in gen:
+            responses.append(response)
+        return responses
 
 
 class BaseSkill:
