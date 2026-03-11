@@ -12,3 +12,6 @@ python-jose[cryptography]
 passlib[bcrypt]
 sqlmodel
 playwright
+google-genai
+markdown
+cssutils
