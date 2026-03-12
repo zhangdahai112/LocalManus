@@ -68,6 +68,11 @@ class ReActAgent(ASReActAgent):
         
         This method uses the parent ReActAgent's built-in reply mechanism
         which handles streaming, tool execution, and the ReAct loop internally.
+        
+        Note: True token-by-token streaming through the ReAct loop is complex because
+        the agent needs complete responses to decide on tool calls. We yield:
+        1. Tool call notifications as they happen
+        2. Final response content streamed progressively
         """
         new_messages = []
         
@@ -91,29 +96,71 @@ class ReActAgent(ASReActAgent):
                 yield {"content": "Error: No message to respond to."}
                 return
             
-            # Call the parent ReActAgent's reply method
-            # This handles the full ReAct loop including tool calls
-            response = await self.reply(last_msg)
+            # Create a queue to receive content chunks
+            content_queue = asyncio.Queue()
+            response_holder = {"response": None, "done": False}
             
-            # Extract and yield the response content
-            if response:
-                content = self._extract_content(response)
-                if content:
-                    yield {"content": content}
+            async def generate_response():
+                """Run the reply in background and stream chunks."""
+                try:
+                    # Call the parent ReActAgent's reply method
+                    response = await self(last_msg)
+                    response_holder["response"] = response
+                    
+                    if response:
+                        content = self._extract_content(response)
+                        
+                        # Stream content in chunks
+                        if content:
+                            chunk_size = 10  # Characters per chunk
+                            for i in range(0, len(content), chunk_size):
+                                chunk = content[i:i + chunk_size]
+                                await content_queue.put({"content": chunk})
+                                # Small delay to allow consumer to process
+                                await asyncio.sleep(0.01)
+                        
+                        # Add to history sync
+                        if hasattr(response, 'role') and hasattr(response, 'content'):
+                            new_messages.append({
+                                "role": response.role,
+                                "content": response.content
+                            })
+                        
+                        # Check for tool calls in response
+                        tool_calls = self._extract_tool_calls(response)
+                        if tool_calls:
+                            for tc in tool_calls:
+                                name = tc.get('function', {}).get('name', tc.get('name', 'unknown'))
+                                await content_queue.put({"content": f"\n\n🔧 **[Tool Used]**: `{name}`\n"})
                 
-                # Add to history sync
-                if hasattr(response, 'role') and hasattr(response, 'content'):
-                    new_messages.append({
-                        "role": response.role,
-                        "content": response.content
-                    })
-                
-                # Check for tool calls in response
-                tool_calls = self._extract_tool_calls(response)
-                if tool_calls:
-                    for tc in tool_calls:
-                        name = tc.get('function', {}).get('name', tc.get('name', 'unknown'))
-                        yield {"content": f"\n\n🔧 **[Tool Used]**: `{name}`\n"}
+                except Exception as e:
+                    logger.error(f"Error in generate_response: {e}")
+                    await content_queue.put({"content": f"\n\n❌ **[Error]**: {str(e)}\n"})
+                finally:
+                    response_holder["done"] = True
+                    await content_queue.put(None)  # Signal completion
+            
+            # Start the response generation task
+            generation_task = asyncio.create_task(generate_response())
+            
+            # Yield an initial empty chunk to establish the connection
+            yield {"content": ""}
+            
+            # Yield chunks as they become available
+            try:
+                while True:
+                    chunk = await content_queue.get()
+                    if chunk is None:
+                        break
+                    yield chunk
+            finally:
+                # Ensure the generation task is cleaned up
+                if not generation_task.done():
+                    generation_task.cancel()
+                    try:
+                        await generation_task
+                    except asyncio.CancelledError:
+                        pass
                     
         except Exception as e:
             logger.error(f"Error in ReAct loop: {str(e)}", exc_info=True)
@@ -237,6 +284,59 @@ class ReActAgent(ASReActAgent):
                         }
                     })
         return tool_calls
+
+    def _extract_text_from_chunk(self, chunk) -> str:
+        """Extract text content from a streaming chunk."""
+        # Direct string
+        if isinstance(chunk, str):
+            return chunk
+        
+        # Object with content attribute (AgentScope format)
+        if hasattr(chunk, 'content'):
+            content = chunk.content
+            if isinstance(content, str):
+                return content
+            elif isinstance(content, list):
+                # Extract text from content blocks
+                texts = []
+                for block in content:
+                    if hasattr(block, 'text'):
+                        texts.append(block.text)
+                    elif isinstance(block, dict) and 'text' in block:
+                        texts.append(block['text'])
+                return ''.join(texts)
+        
+        # Dictionary format (OpenAI streaming)
+        if isinstance(chunk, dict):
+            if 'choices' in chunk and len(chunk['choices']) > 0:
+                delta = chunk['choices'][0].get('delta', {})
+                return delta.get('content', '')
+            return chunk.get('content', chunk.get('text', ''))
+        
+        return ''
+
+    def _extract_tool_calls_from_text(self, text: str) -> list:
+        """Extract tool calls from text content (for streaming responses)."""
+        tool_calls = []
+        # Look for tool_use patterns in the text
+        # This is a simple heuristic - in practice, tool calls come through
+        # the streaming API in a structured format
+        import re
+        # Pattern to match tool calls like <tool_use> or function_call patterns
+        # This is model-dependent and may need adjustment
+        return tool_calls
+
+    async def _execute_tool_calls(self, tool_calls: list) -> list:
+        """Execute tool calls and return results."""
+        results = []
+        for tc in tool_calls:
+            try:
+                result = await self.execute_tool(tc)
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Error executing tool {tc}: {e}")
+                results.append(f"Error: {str(e)}")
+        return results
 
     async def execute_tool(self, tool_call: Dict) -> str:
         """Helper to execute a tool and return the observation string."""

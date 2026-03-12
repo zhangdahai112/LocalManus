@@ -415,7 +415,12 @@ async def chat_sse(
     
     return StreamingResponse(
         orchestrator.chat_stream(session_id, input, user_context=user_context, file_paths=file_paths_list),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
     )
 
 @app.post("/api/task")
