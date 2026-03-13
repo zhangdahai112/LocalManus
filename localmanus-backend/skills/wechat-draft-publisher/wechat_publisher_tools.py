@@ -58,6 +58,111 @@ class WeChatPublisherSkill(BaseSkill):
         """Get human-readable error message from error code."""
         return self.ERROR_CODES.get(errcode, f"未知错误 (错误码: {errcode})")
 
+    async def _compress_image(
+        self,
+        image_path: str,
+        max_size: int = 2 * 1024 * 1024,  # 2MB
+        max_dimension: int = 1280,  # Max width/height
+        quality: int = 85  # JPEG quality
+    ) -> str:
+        """
+        Compress image to JPG format with proportional scaling.
+        
+        Args:
+            image_path: Path to the original image
+            max_size: Maximum file size in bytes (default: 2MB)
+            max_dimension: Maximum width/height in pixels (default: 1280)
+            quality: JPEG quality 1-100 (default: 85)
+            
+        Returns:
+            Path to compressed image (may be same as input if no compression needed)
+        """
+        try:
+            from PIL import Image
+        except ImportError:
+            logger.warning("PIL not available, skipping image compression")
+            return image_path
+
+        image_file = Path(image_path)
+        file_size = image_file.stat().st_size
+        
+        # Check if compression is needed
+        if file_size <= max_size:
+            # Check dimensions
+            try:
+                with Image.open(image_path) as img:
+                    width, height = img.size
+                    if width <= max_dimension and height <= max_dimension:
+                        # No compression needed
+                        return image_path
+            except Exception as e:
+                logger.warning(f"Cannot check image dimensions: {e}")
+                return image_path
+
+        # Need to compress
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def _compress():
+                with Image.open(image_path) as img:
+                    # Convert to RGB if necessary (handles PNG with transparency)
+                    if img.mode in ('RGBA', 'P'):
+                        # Create white background for transparency
+                        background = Image.new('RGB', img.size, (255, 255, 255))
+                        if img.mode == 'P':
+                            img = img.convert('RGBA')
+                        background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                        img = background
+                    elif img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Calculate new dimensions (proportional scaling)
+                    width, height = img.size
+                    if width > max_dimension or height > max_dimension:
+                        ratio = min(max_dimension / width, max_dimension / height)
+                        new_width = int(width * ratio)
+                        new_height = int(height * ratio)
+                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    
+                    # Create temporary file for compressed image
+                    import tempfile
+                    temp_file = tempfile.NamedTemporaryFile(
+                        suffix='.jpg',
+                        delete=False,
+                        dir=image_file.parent
+                    )
+                    temp_path = temp_file.name
+                    temp_file.close()
+                    
+                    # Save with compression
+                    img.save(temp_path, 'JPEG', quality=quality, optimize=True)
+                    
+                    # Check if still too large, reduce quality further if needed
+                    compressed_size = Path(temp_path).stat().st_size
+                    current_quality = quality
+                    
+                    while compressed_size > max_size and current_quality > 30:
+                        current_quality -= 10
+                        img.save(temp_path, 'JPEG', quality=current_quality, optimize=True)
+                        compressed_size = Path(temp_path).stat().st_size
+                    
+                    return temp_path
+            
+            compressed_path = await loop.run_in_executor(None, _compress)
+            
+            original_size = file_size / 1024 / 1024
+            new_size = Path(compressed_path).stat().st_size / 1024 / 1024
+            logger.info(
+                f"Image compressed: {image_file.name} "
+                f"({original_size:.2f}MB -> {new_size:.2f}MB)"
+            )
+            
+            return compressed_path
+            
+        except Exception as e:
+            logger.error(f"Image compression failed: {e}")
+            return image_path  # Return original on failure
+
     async def _get_access_token(self, appid: str, appsecret: str) -> str:
         """Get access token from WeChat API."""
         try:
@@ -140,10 +245,18 @@ class WeChatPublisherSkill(BaseSkill):
                 )])
 
             file_size = image_file.stat().st_size
+            
+            # Compress image if needed
+            compressed_path = await self._compress_image(image_path)
+            if compressed_path != image_path:
+                # Use compressed image for upload
+                image_file = Path(compressed_path)
+                file_size = image_file.stat().st_size
+
             if file_size > 2 * 1024 * 1024:  # 2MB limit
                 return ToolResponse(content=[TextBlock(
                     type="text",
-                    text=f"❌ Error: Image file too large ({file_size / 1024 / 1024:.2f}MB). Max size is 2MB."
+                    text=f"❌ Error: Image file too large after compression ({file_size / 1024 / 1024:.2f}MB). Max size is 2MB."
                 )])
 
             # Get access token
@@ -158,7 +271,7 @@ class WeChatPublisherSkill(BaseSkill):
 
             loop = asyncio.get_event_loop()
             
-            with open(image_path, 'rb') as f:
+            with open(compressed_path, 'rb') as f:
                 files = {"media": (image_file.name, f, "image/jpeg")}
                 response = await loop.run_in_executor(
                     None,
@@ -166,6 +279,10 @@ class WeChatPublisherSkill(BaseSkill):
                 )
 
             result = response.json()
+
+            # Clean up temporary compressed file if different from original
+            if compressed_path != image_path and Path(compressed_path).exists():
+                Path(compressed_path).unlink()
 
             if "errcode" in result and result["errcode"] != 0:
                 return ToolResponse(content=[TextBlock(

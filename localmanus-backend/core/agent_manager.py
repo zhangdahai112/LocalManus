@@ -36,7 +36,20 @@ class AgentLifecycleManager:
         # Initialize our core agents with the model instance and other requirements
         self.manager = ManagerAgent(model=self.model, formatter=self.formatter)
         self.planner = PlannerAgent(model=self.model, formatter=self.formatter)
-        self.react_agent = ReActAgent(model=self.model, formatter=self.formatter, skill_manager=self.skill_manager)
+        
+        # Memory compression settings (configurable via environment variables)
+        enable_compression = os.getenv("ENABLE_MEMORY_COMPRESSION", "true").lower() == "true"
+        compression_threshold = int(os.getenv("MEMORY_COMPRESSION_THRESHOLD", "10000"))
+        keep_recent = int(os.getenv("MEMORY_KEEP_RECENT", "3"))
+        
+        self.react_agent = ReActAgent(
+            model=self.model, 
+            formatter=self.formatter, 
+            skill_manager=self.skill_manager,
+            enable_compression=enable_compression,
+            compression_threshold=compression_threshold,
+            keep_recent=keep_recent,
+        )
 
     def get_agents(self):
         return self.manager, self.planner, self.react_agent

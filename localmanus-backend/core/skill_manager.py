@@ -170,19 +170,42 @@ class SkillManager:
     async def execute_tool(self, tool_name: str, user_context: Optional[Dict] = None, **kwargs) -> Any:
         """
         Executes a registered tool function using AgentScope's toolkit.
+        
+        Automatically injects:
+        - user_id: From user_context.id if tool requires it
+        - user_context: Full context if tool requires it
+        - appid/appsecret: WeChat credentials from user_context.wechat config if tool requires them
         """
         try:
             if tool_name not in self.toolkit.tools:
                 raise ValueError(f"Tool '{tool_name}' not found.")
             
-            # Inject user context if required by the function signature
+            # Inject context if required by the function signature
             tool_func = self.toolkit.tools[tool_name].original_func
             sig = inspect.signature(tool_func)
             
-            if "user_id" in sig.parameters and user_context:
-                kwargs["user_id"] = str(user_context.get("id", ""))
-            if "user_context" in sig.parameters:
-                kwargs["user_context"] = user_context
+            # Inject user context fields
+            if user_context:
+                if "user_id" in sig.parameters:
+                    kwargs["user_id"] = str(user_context.get("id", ""))
+                if "user_context" in sig.parameters:
+                    kwargs["user_context"] = user_context
+                
+                # Inject WeChat credentials (appid/appsecret) if tool requires them
+                # Credentials are expected in user_context["wechat"]["appid"] and ["appsecret"]
+                wechat_config = user_context.get("wechat", {}) if isinstance(user_context, dict) else {}
+                
+                if "appid" in sig.parameters and "appid" not in kwargs:
+                    appid = wechat_config.get("appid") if wechat_config else None
+                    if appid:
+                        kwargs["appid"] = appid
+                        logger.debug(f"Injected appid for tool '{tool_name}'")
+                
+                if "appsecret" in sig.parameters and "appsecret" not in kwargs:
+                    appsecret = wechat_config.get("appsecret") if wechat_config else None
+                    if appsecret:
+                        kwargs["appsecret"] = appsecret
+                        logger.debug(f"Injected appsecret for tool '{tool_name}'")
 
             # Call via toolkit (handles async wrapping and ToolResponse conversion)
             from agentscope.message import ToolUseBlock

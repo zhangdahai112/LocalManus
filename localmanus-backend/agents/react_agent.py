@@ -1,16 +1,18 @@
 """ReAct Agent with SSE Streaming Support using Native AgentScope API.
 
 This module implements a ReAct (Reasoning and Acting) agent that uses AgentScope's
-native ReActAgent with proper skill integration and streaming support.
+native ReActAgent with proper skill integration, streaming support, and memory compression.
 """
 
 import json
 import logging
 import datetime
 import asyncio
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, Type
+from pydantic import BaseModel, Field
 from agentscope.agent import ReActAgent as ASReActAgent
 from agentscope.message import Msg
+from agentscope.token import TokenCounterBase
 from core.skill_manager import SkillManager
 from core.prompts import REACT_AGENT_SYSTEM_PROMPT
 
@@ -29,18 +31,201 @@ def set_thinking_callback(callback):
     _thinking_callback = callback
 
 
-class ReActAgent(ASReActAgent):
-    """Standardized ReAct Agent following AgentScope patterns."""
+# ============================================================================
+# Memory Compression Schema
+# ============================================================================
+
+class CompressionSummarySchema(BaseModel):
+    """Structured model for compressed memory summary."""
     
-    def __init__(self, model, formatter, skill_manager: SkillManager):
-        """Initialize the ReAct agent with AgentScope native implementation."""
-        # Initialize parent ReActAgent with toolkit
+    task_overview: str = Field(
+        max_length=300,
+        description=(
+            "The user's core request and success criteria. "
+            "Any clarifications or constraints they specified"
+        ),
+    )
+    current_state: str = Field(
+        max_length=300,
+        description=(
+            "What has been completed so far. "
+            "File created, modified, or analyzed (with paths if relevant). "
+            "Key outputs or artifacts produced."
+        ),
+    )
+    important_discoveries: str = Field(
+        max_length=300,
+        description=(
+            "Technical constraints or requirements uncovered. "
+            "Decisions made and their rationale. "
+            "Errors encountered and how they were resolved. "
+            "What approaches were tried that didn't work (and why)"
+        ),
+    )
+    next_steps: str = Field(
+        max_length=200,
+        description=(
+            "Specific actions needed to complete the task. "
+            "Any blockers or open questions to resolve. "
+            "Priority order if multiple steps remain"
+        ),
+    )
+    context_to_preserve: str = Field(
+        max_length=300,
+        description=(
+            "User preferences or style requirements. "
+            "Domain-specific details that aren't obvious. "
+            "Any promises made to the user"
+        ),
+    )
+
+
+# ============================================================================
+# Simple Token Counter
+# ============================================================================
+
+class SimpleTokenCounter(TokenCounterBase):
+    """Simple token counter using character-based estimation.
+    
+    Uses a rough estimate of ~4 characters per token for most languages.
+    For more accurate counting, consider using tiktoken for OpenAI models.
+    """
+    
+    def __init__(self, chars_per_token: int = 4):
+        self.chars_per_token = chars_per_token
+    
+    async def count(self, messages) -> int:
+        """Count tokens in messages.
+        
+        Args:
+            messages: Either a string or list of Msg objects
+            
+        Returns:
+            Estimated token count
+        """
+        if isinstance(messages, str):
+            return len(messages) // self.chars_per_token
+        
+        total_chars = 0
+        if isinstance(messages, list):
+            for msg in messages:
+                if isinstance(msg, Msg):
+                    content = msg.get_text_content() if hasattr(msg, 'get_text_content') else str(msg.content)
+                    total_chars += len(content)
+                elif isinstance(msg, dict):
+                    content = msg.get('content', '')
+                    if isinstance(content, str):
+                        total_chars += len(content)
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict):
+                                total_chars += len(block.get('text', ''))
+                            elif hasattr(block, 'text'):
+                                total_chars += len(block.text)
+                else:
+                    total_chars += len(str(msg))
+        else:
+            total_chars = len(str(messages))
+        
+        return total_chars // self.chars_per_token
+
+
+class ReActAgent(ASReActAgent):
+    """Standardized ReAct Agent following AgentScope patterns.
+    
+    Features:
+    - Memory compression when token count exceeds threshold
+    - SSE streaming support
+    - Tool execution via skill manager
+    """
+    
+    # Compression configuration constants
+    DEFAULT_COMPRESSION_THRESHOLD = 10000  # tokens
+    DEFAULT_KEEP_RECENT = 3  # messages to keep uncompressed
+    
+    # Compression prompt template
+    COMPRESSION_PROMPT = (
+        "<system-hint>You have been working on the task described above "
+        "but have not yet completed it. "
+        "Now write a continuation summary that will allow you to resume "
+        "work efficiently in a future context window where the "
+        "conversation history will be replaced with this summary. "
+        "Your summary should be structured, concise, and actionable."
+        "</system-hint>"
+    )
+    
+    # Summary template for compressed memory
+    SUMMARY_TEMPLATE = (
+        "<system-info>Here is a summary of your previous work\n"
+        "# Task Overview\n"
+        "{task_overview}\n\n"
+        "# Current State\n"
+        "{current_state}\n\n"
+        "# Important Discoveries\n"
+        "{important_discoveries}\n\n"
+        "# Next Steps\n"
+        "{next_steps}\n\n"
+        "# Context to Preserve\n"
+        "{context_to_preserve}"
+        "</system-info>"
+    )
+    
+    def __init__(
+        self, 
+        model, 
+        formatter, 
+        skill_manager: SkillManager,
+        enable_compression: bool = True,
+        compression_threshold: int = None,
+        keep_recent: int = None,
+        compression_model = None,
+        compression_formatter = None
+    ):
+        """Initialize the ReAct agent with AgentScope native implementation.
+        
+        Args:
+            model: The LLM model to use
+            formatter: Message formatter for the model
+            skill_manager: SkillManager instance for tool execution
+            enable_compression: Whether to enable memory compression (default: True)
+            compression_threshold: Token threshold to trigger compression (default: 10000)
+            keep_recent: Number of recent messages to keep uncompressed (default: 3)
+            compression_model: Optional separate model for compression (default: use main model)
+            compression_formatter: Optional formatter for compression model
+        """
+        # Build compression config if enabled
+        compression_config = None
+        if enable_compression:
+            from agentscope.agent._react_agent import ReActAgent as OfficialReActAgent
+            
+            # Create token counter
+            token_counter = SimpleTokenCounter(chars_per_token=4)
+            
+            # Use provided values or defaults
+            threshold = compression_threshold or self.DEFAULT_COMPRESSION_THRESHOLD
+            keep = keep_recent or self.DEFAULT_KEEP_RECENT
+            
+            compression_config = OfficialReActAgent.CompressionConfig(
+                enable=True,
+                agent_token_counter=token_counter,
+                trigger_threshold=threshold,
+                keep_recent=keep,
+                compression_prompt=self.COMPRESSION_PROMPT,
+                summary_template=self.SUMMARY_TEMPLATE,
+                summary_schema=CompressionSummarySchema,
+                compression_model=compression_model,
+                compression_formatter=compression_formatter,
+            )
+            logger.info(f"Memory compression enabled: threshold={threshold} tokens, keep_recent={keep}")
+        
+        # Initialize parent ReActAgent with toolkit and compression config
         super().__init__(
             name="LocalManus-ReAct",
             sys_prompt="",  # Will be set dynamically for each conversation
             model=model,
             formatter=formatter,
-            toolkit=skill_manager.toolkit
+            toolkit=skill_manager.toolkit,
+            compression_config=compression_config,
         )
         self.skill_manager = skill_manager
         self.original_model = model  # Keep reference for streaming if needed
