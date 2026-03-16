@@ -64,19 +64,20 @@ class SandboxClient:
     
     def read_file(self, file_path: str) -> str:
         """Read file from sandbox"""
-        result = self._request('POST', '/v1/file/read', json={'file': file_path})
+        result = self._request('POST', '/v1/file/read', json={'file': file_path, 'sudo': True})
         return result.get('data', {}).get('content', '')
     
     def write_file(self, file_path: str, content: str) -> Dict[str, Any]:
         """Write file to sandbox"""
         return self._request('POST', '/v1/file/write', json={
             'file': file_path,
-            'content': content
+            'content': content,
+            "sudo" : True
         })
     
     def list_files(self, path: str) -> List[Dict[str, Any]]:
         """List files in directory"""
-        result = self._request('POST', '/v1/file/list', json={'path': path})
+        result = self._request('POST', '/v1/file/list', json={'path': path, 'sudo': True})
         return result.get('data', {}).get('files', [])
     
     def screenshot(self) -> bytes:

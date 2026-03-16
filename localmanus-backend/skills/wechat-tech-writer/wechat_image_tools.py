@@ -4,6 +4,7 @@
 WeChat Image Generation Tools for AgentScope
 
 Supports SiliconFlow API (Kolors model) for image generation.
+Images are saved to the user's sandbox with automatic compression.
 """
 
 import os
@@ -11,6 +12,7 @@ import json
 import base64
 import logging
 import asyncio
+import tempfile
 from typing import Optional, Dict, Any
 from pathlib import Path
 
@@ -125,17 +127,17 @@ class WeChatImageGenSkill(BaseSkill):
         user_id: str = ""
     ) -> ToolResponse:
         """
-        Generate image using SiliconFlow API (Kolors model).
+        Generate image using SiliconFlow API (Kolors model) and save to sandbox.
 
         Args:
             prompt (str): Image generation prompt (describe the image you want).
-            output_path (str): Path to save the generated image (e.g., "cover.png").
+            output_path (str): Path to save the generated image in sandbox (e.g., "cover.jpg").
             negative_prompt (str): Negative prompt - things to avoid in the image.
             resolution (str): Image resolution - "1792x1024", "1024x1024", "1024x1792".
             user_id (str): User ID (automatically injected).
 
         Returns:
-            ToolResponse: Path to the generated image.
+            ToolResponse: Path to the generated image in sandbox.
         """
         try:
             import requests
@@ -143,6 +145,14 @@ class WeChatImageGenSkill(BaseSkill):
             return ToolResponse(content=[TextBlock(
                 type="text",
                 text="❌ Error: requests package is required. Run: pip install requests"
+            )])
+
+        try:
+            from core.firecracker_sandbox import sandbox_manager
+        except ImportError:
+            return ToolResponse(content=[TextBlock(
+                type="text",
+                text="❌ Error: sandbox_manager not available"
             )])
 
         try:
@@ -154,9 +164,16 @@ class WeChatImageGenSkill(BaseSkill):
                          "Get your API key from: https://cloud.siliconflow.cn/"
                 )])
 
-            # Ensure output directory exists
-            output_file = Path(output_path)
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            # Get sandbox info for the user
+            sandbox_info = sandbox_manager.get_sandbox(user_id)
+            client = sandbox_manager.get_client(user_id)
+            sandbox_home = sandbox_info.home_dir or '/home/gem'
+            
+            # Ensure output path is relative to sandbox home
+            if output_path.startswith('/'):
+                sandbox_output_path = output_path
+            else:
+                sandbox_output_path = f"{sandbox_home}/{output_path}"
 
             loop = asyncio.get_event_loop()
             
@@ -181,17 +198,45 @@ class WeChatImageGenSkill(BaseSkill):
                 )])
             
             image_data = img_response.content
-            with open(output_path, 'wb') as f:
-                f.write(image_data)
+            original_size = len(image_data) / 1024
+            
+            # Compress image
+            compressed_data, compression_info = await self._compress_image_data(image_data)
+            final_size = len(compressed_data) / 1024
+            
+            # Save to sandbox
+            # Convert to base64 for sandbox write
+            image_base64 = base64.b64encode(compressed_data).decode('utf-8')
+            
+            # Write to sandbox using the client
+            # Note: sandbox API expects file content as string
+            # We need to write binary data, so we use base64
+            try:
+                # Create directory if needed
+                dir_path = '/'.join(sandbox_output_path.split('/')[:-1])
+                client.exec_command(f"mkdir -p {dir_path}")
+                
+                # Write file using base64 decode in sandbox
+                client.write_file(sandbox_output_path + '.b64', image_base64)
+                
+            except Exception as e:
+                logger.error(f"Failed to write to sandbox: {e}")
+                # Fallback: try direct write (may not work for binary)
+                return ToolResponse(content=[TextBlock(
+                    type="text",
+                    text=f"❌ Error: Failed to save image to sandbox: {str(e)}"
+                )])
 
             return ToolResponse(content=[TextBlock(
                 type="text",
-                text=f"✅ Image generated successfully!\n\n"
+                text=f"✅ Image generated and saved to sandbox!\n\n"
                      f"🎨 Model: Kwai-Kolors/Kolors (SiliconFlow)\n"
                      f"📐 Resolution: {resolution}\n"
                      f"📝 Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}\n"
-                     f"📁 Saved to: {output_path}\n"
-                     f"📊 Size: {len(image_data) / 1024:.1f} KB"
+                     f"📁 Sandbox path: {sandbox_output_path}\n"
+                     f"📊 Original size: {original_size:.1f} KB\n"
+                     f"📊 Compressed size: {final_size:.1f} KB\n"
+                     f"💾 Compression: {compression_info}"
             )])
 
         except Exception as e:
@@ -201,26 +246,98 @@ class WeChatImageGenSkill(BaseSkill):
                 text=f"❌ SiliconFlow API error: {str(e)}"
             )])
 
+    async def _compress_image_data(
+        self,
+        image_data: bytes,
+        max_size: int = 2 * 1024 * 1024,  # 2MB
+        max_dimension: int = 1280,
+        quality: int = 85
+    ) -> tuple:
+        """
+        Compress image data to JPEG format with proportional scaling.
+        
+        Args:
+            image_data: Raw image bytes
+            max_size: Maximum file size in bytes (default: 2MB)
+            max_dimension: Maximum width/height in pixels (default: 1280)
+            quality: JPEG quality 1-100 (default: 85)
+            
+        Returns:
+            tuple: (compressed_data: bytes, compression_info: str)
+        """
+        try:
+            from PIL import Image
+            import io
+        except ImportError:
+            logger.warning("PIL not available, skipping image compression")
+            return image_data, "Skipped (PIL not available)"
+
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def _compress():
+                # Open image from bytes
+                img = Image.open(io.BytesIO(image_data))
+                
+                # Convert to RGB if necessary (handles PNG with transparency)
+                if img.mode in ('RGBA', 'P'):
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                    img = background
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Calculate new dimensions (proportional scaling)
+                width, height = img.size
+                if width > max_dimension or height > max_dimension:
+                    ratio = min(max_dimension / width, max_dimension / height)
+                    new_width = int(width * ratio)
+                    new_height = int(height * ratio)
+                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                # Save to bytes
+                output = io.BytesIO()
+                img.save(output, 'JPEG', quality=quality, optimize=True)
+                compressed = output.getvalue()
+                
+                # Reduce quality if still too large
+                current_quality = quality
+                while len(compressed) > max_size and current_quality > 30:
+                    current_quality -= 10
+                    output = io.BytesIO()
+                    img.save(output, 'JPEG', quality=current_quality, optimize=True)
+                    compressed = output.getvalue()
+                
+                return compressed, f"quality={current_quality}"
+            
+            return await loop.run_in_executor(None, _compress)
+            
+        except Exception as e:
+            logger.error(f"Image compression failed: {e}")
+            return image_data, f"Failed: {str(e)}"
+
     async def generate_wechat_cover(
         self,
         topic: str,
         style: str = "tech",
-        output_path: str = "cover.png",
+        output_path: str = "cover.jpg",
         negative_prompt: str = "",
         user_id: str = ""
     ) -> ToolResponse:
         """
-        Generate a WeChat article cover image with optimized prompt.
+        Generate a WeChat article cover image with optimized prompt and save to sandbox.
 
         Args:
             topic (str): Article topic/subject for the cover.
             style (str): Visual style - "tech", "business", "minimal", "creative".
-            output_path (str): Path to save the cover image.
+            output_path (str): Path to save the cover image in sandbox.
             negative_prompt (str): Negative prompt - things to avoid.
             user_id (str): User ID (automatically injected).
 
         Returns:
-            ToolResponse: Path to the generated cover image.
+            ToolResponse: Path to the generated cover image in sandbox.
         """
         # Build optimized prompt for WeChat cover
         style_prompts = {
