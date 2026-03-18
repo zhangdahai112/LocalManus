@@ -12,7 +12,6 @@ import json
 import base64
 import logging
 import asyncio
-import tempfile
 from typing import Optional, Dict, Any
 from pathlib import Path
 
@@ -148,14 +147,6 @@ class WeChatImageGenSkill(BaseSkill):
             )])
 
         try:
-            from core.firecracker_sandbox import sandbox_manager
-        except ImportError:
-            return ToolResponse(content=[TextBlock(
-                type="text",
-                text="❌ Error: sandbox_manager not available"
-            )])
-
-        try:
             api_key = os.environ.get('SILICONFLOW_API_KEY', 'sk-gvplafctkpscuqypjnswuaufdydwnxixgvvlxrxpbjoigeub')
             if not api_key:
                 return ToolResponse(content=[TextBlock(
@@ -164,16 +155,12 @@ class WeChatImageGenSkill(BaseSkill):
                          "Get your API key from: https://cloud.siliconflow.cn/"
                 )])
 
-            # Get sandbox info for the user
-            sandbox_info = sandbox_manager.get_sandbox(user_id)
-            client = sandbox_manager.get_client(user_id)
-            sandbox_home = sandbox_info.home_dir or '/home/gem'
+            # Get FileManager for user
+            from core.file_manager import get_file_manager
+            fm = await get_file_manager(user_id)
             
-            # Ensure output path is relative to sandbox home
-            if output_path.startswith('/'):
-                sandbox_output_path = output_path
-            else:
-                sandbox_output_path = f"{sandbox_home}/{output_path}"
+            # Resolve output path
+            sandbox_output_path = fm.resolve_path(output_path)
 
             loop = asyncio.get_event_loop()
             
@@ -204,27 +191,13 @@ class WeChatImageGenSkill(BaseSkill):
             compressed_data, compression_info = await self._compress_image_data(image_data)
             final_size = len(compressed_data) / 1024
             
-            # Save to sandbox
-            # Convert to base64 for sandbox write
-            image_base64 = base64.b64encode(compressed_data).decode('utf-8')
+            # Save to sandbox using FileManager
+            result = await fm.write(sandbox_output_path, compressed_data)
             
-            # Write to sandbox using the client
-            # Note: sandbox API expects file content as string
-            # We need to write binary data, so we use base64
-            try:
-                # Create directory if needed
-                dir_path = '/'.join(sandbox_output_path.split('/')[:-1])
-                client.exec_command(f"mkdir -p {dir_path}")
-                
-                # Write file using base64 decode in sandbox
-                client.write_file(sandbox_output_path + '.b64', image_base64)
-                
-            except Exception as e:
-                logger.error(f"Failed to write to sandbox: {e}")
-                # Fallback: try direct write (may not work for binary)
+            if not result["success"]:
                 return ToolResponse(content=[TextBlock(
                     type="text",
-                    text=f"❌ Error: Failed to save image to sandbox: {str(e)}"
+                    text=f"❌ Error: Failed to save image: {result.get('error')}"
                 )])
 
             return ToolResponse(content=[TextBlock(

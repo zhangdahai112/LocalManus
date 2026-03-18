@@ -75,6 +75,18 @@ class SandboxClient:
             "sudo" : True
         })
     
+    def upload_file(self, file_path: str, content: bytes) -> Dict[str, Any]:
+        """Upload binary file to sandbox"""
+        import base64
+        # Encode binary content as base64 and send via write_file
+        encoded_content = base64.b64encode(content).decode('utf-8')
+        return self._request('POST', '/v1/file/write', json={
+            'file': file_path,
+            'content': encoded_content,
+            'encoding': 'base64',
+            "sudo": True
+        })
+    
     def list_files(self, path: str) -> List[Dict[str, Any]]:
         """List files in directory"""
         result = self._request('POST', '/v1/file/list', json={'path': path, 'sudo': True})
