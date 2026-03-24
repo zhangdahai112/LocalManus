@@ -13,12 +13,12 @@ import json
 def test_local_mode():
     """Test LOCAL mode - connecting to existing sandbox"""
     print("\n" + "="*60)
-    print("Testing LOCAL Mode (http://192.168.126.132:8080)")
+    print("Testing LOCAL Mode (http://192.168.126.133:8080)")
     print("="*60)
     
     manager = SandboxManager(
         mode=SandboxMode.LOCAL,
-        local_url="http://192.168.126.132:8080"
+        local_url="http://192.168.126.133:8080"
     )
     
     user_id = "test_user_local"
@@ -146,7 +146,7 @@ def test_direct_client():
     print("Testing Direct SandboxClient")
     print("="*60)
     
-    client = SandboxClient("http://192.168.126.132:8080")
+    client = SandboxClient("http://192.168.126.133:8080")
     
     try:
         # Test context

@@ -182,7 +182,7 @@ Gets information about the user's sandbox environment.
 Set in `.env` file:
 ```bash
 SANDBOX_MODE=local  # or 'online'
-SANDBOX_LOCAL_URL=http://192.168.126.132:8080
+SANDBOX_LOCAL_URL=http://192.168.126.133:8080
 USE_CHINA_MIRROR=false  # true if in China
 ```
 

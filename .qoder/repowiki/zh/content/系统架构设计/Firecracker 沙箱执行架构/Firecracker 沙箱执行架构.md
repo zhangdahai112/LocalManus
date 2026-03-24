@@ -10,6 +10,7 @@
 - [skill_manager.py](file://localmanus-backend/core/skill_manager.py)
 - [base_agents.py](file://localmanus-backend/agents/base_agents.py)
 - [file_ops.py](file://localmanus-backend/skills/file-operations/file_ops.py)
+- [file_manager.py](file://localmanus-backend/core/file_manager.py)
 - [localmanus_architecture.md](file://localmanus_architecture.md)
 - [docker-compose.yml](file://docker-compose.yml)
 - [docker-compose.prod.yml](file://docker-compose.prod.yml)
@@ -27,15 +28,18 @@
 - [nginx.conf](file://nginx/nginx.conf)
 - [nginx.prod.conf](file://nginx/nginx.prod.conf)
 - [Dockerfile](file://localmanus-backend/Dockerfile)
+- [models.py](file://localmanus-backend/core/models.py)
+- [database.py](file://localmanus-backend/core/database.py)
+- [Omnibox.tsx](file://localmanus-ui/app/components/Omnibox.tsx)
 </cite>
 
 ## 更新摘要
 **所做更改**
-- 更新架构概述以反映生产就绪的 Docker Compose 沙箱系统
-- 新增生产环境配置、seccomp 设置、VNC 密码认证和健康检查机制
-- 更新部署配置以包含新的 docker-compose.prod.yml 和 nginx 生产配置
-- 新增生产环境部署脚本和监控配置
-- 更新故障排查指南以包含新的系统特性
+- 新增二进制文件上传功能，支持base64编码的二进制数据传输
+- 更新文件管理器以支持二进制文件的读写操作
+- 新增文件上传API端点和数据库模型
+- 更新前端组件以支持文件选择和上传
+- 新增文件管理器的统一文件操作接口
 
 ## 目录
 1. [简介](#简介)
@@ -43,14 +47,17 @@
 3. [核心组件](#核心组件)
 4. [架构总览](#架构总览)
 5. [组件详解](#组件详解)
-6. [依赖关系分析](#依赖关系分析)
-7. [性能与资源优化](#性能与资源优化)
-8. [故障排查指南](#故障排查指南)
-9. [结论](#结论)
-10. [附录](#附录)
+6. [文件上传与管理](#文件上传与管理)
+7. [依赖关系分析](#依赖关系分析)
+8. [性能与资源优化](#性能与资源优化)
+9. [故障排查指南](#故障排查指南)
+10. [结论](#结论)
+11. [附录](#附录)
 
 ## 简介
-**更新** 本文件现面向 LocalManus 的 agent-infra/sandbox 执行架构，系统性阐述基于 Docker 容器的沙箱系统生命周期管理、双模式（本地共享/在线隔离）架构、REST API 通信机制、浏览器自动化（Playwright/CDP）、VSCode 服务器集成、Jupyter 环境支持以及 MCP 协议集成。同时提供生产就绪的部署配置、健康检查机制、VNC 密码认证、Nginx 反向代理配置、性能优化策略、资源限制配置、故障恢复机制，帮助读者快速理解并稳定落地该架构。
+本文件现面向 LocalManus 的 agent-infra/sandbox 执行架构，系统性阐述基于 Docker 容器的沙箱系统生命周期管理、双模式（本地共享/在线隔离）架构、REST API 通信机制、浏览器自动化（Playwright/CDP）、VSCode 服务器集成、Jupyter 环境支持以及 MCP 协议集成。同时提供生产就绪的部署配置、健康检查机制、VNC 密码认证、Nginx 反向代理配置、性能优化策略、资源限制配置、故障恢复机制，帮助读者快速理解并稳定落地该架构。
+
+**更新** 新增二进制文件上传功能，支持base64编码的二进制数据传输，为沙箱环境提供完整的文件操作能力。
 
 ## 项目结构
 后端采用 FastAPI 提供统一 API 网关，结合 AgentScope 的多智能体编排能力，按需调度技能（Skills）在 agent-infra/sandbox 容器环境中执行。核心目录与职责如下：
@@ -64,10 +71,13 @@
     - skill_manager.py：技能注册与工具调用
     - firecracker_sandbox.py：**已重构为agent-infra/sandbox统一管理器**
     - sandbox.py：**向后兼容适配器**
+    - file_manager.py：**新增** 统一文件管理器，支持主机和沙箱文件操作
+    - models.py：**新增** 数据模型定义，包括文件上传模型
+    - database.py：**新增** 数据库初始化和会话管理
   - agents：智能体实现
     - base_agents.py：Manager/Planner 基类
   - skills：技能实现示例
-    - file-operations/file_ops.py：文件操作技能
+    - file-operations/file_ops.py：**更新** 文件操作技能，支持二进制文件处理
   - scripts：**新增** agent-infra/sandbox 部署与排障脚本
   - docker-compose.yml：**更新** 开发环境服务编排与网络
   - docker-compose.prod.yml：**新增** 生产环境服务编排与沙箱配置
@@ -76,6 +86,8 @@
 - nginx：**新增** Nginx 反向代理配置
   - nginx.conf：开发环境配置
   - nginx.prod.conf：生产环境配置，包含 VNC 密码认证和健康检查
+- localmanus-ui：**新增** 前端组件，支持文件上传功能
+  - app/components/Omnibox.tsx：**新增** 智能框组件，包含文件上传功能
 
 ```mermaid
 graph TB
@@ -89,9 +101,12 @@ SM["技能管理<br/>skill_manager.py"]
 FB["文件操作技能<br/>skills/file-operations/file_ops.py"]
 SB["SandboxManager<br/>core/firecracker_sandbox.py"]
 LEG["向后兼容适配器<br/>core/sandbox.py"]
+FM["文件管理器<br/>core/file_manager.py"]
+MODELS["数据模型<br/>core/models.py"]
+DB["数据库<br/>core/database.py"]
 end
 subgraph "前端"
-UI["Next.js 应用"]
+UI["Next.js 应用<br/>Omnibox.tsx"]
 end
 subgraph "反向代理"
 NGINX["Nginx 反向代理"]
@@ -107,25 +122,31 @@ ORCH --> SM
 SM --> FB
 ORCH --> SB
 SB --> LEG
+SB --> FM
+FM --> SANDBOX
+API --> MODELS
+MODELS --> DB
 NGINX --> SANDBOX
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L1-L476)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L1-L150)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L1-L49)
-- [config.py](file://localmanus-backend/core/config.py#L1-L27)
-- [prompts.py](file://localmanus-backend/core/prompts.py#L1-L75)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L1-L143)
-- [file_ops.py](file://localmanus-backend/skills/file-operations/file_ops.py#L1-L165)
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L1-L312)
-- [sandbox.py](file://localmanus-backend/core/sandbox.py#L1-L46)
-- [docker-compose.yml](file://docker-compose.yml#L1-L88)
-- [docker-compose.prod.yml](file://docker-compose.prod.yml#L1-L51)
+- [main.py:1-524](file://localmanus-backend/main.py#L1-L524)
+- [orchestrator.py:1-150](file://localmanus-backend/core/orchestrator.py#L1-L150)
+- [agent_manager.py:1-49](file://localmanus-backend/core/agent_manager.py#L1-L49)
+- [config.py:1-27](file://localmanus-backend/core/config.py#L1-L27)
+- [prompts.py:1-75](file://localmanus-backend/core/prompts.py#L1-L75)
+- [skill_manager.py:1-143](file://localmanus-backend/core/skill_manager.py#L1-L143)
+- [file_ops.py:1-199](file://localmanus-backend/skills/file-operations/file_ops.py#L1-L199)
+- [firecracker_sandbox.py:1-325](file://localmanus-backend/core/firecracker_sandbox.py#L1-L325)
+- [sandbox.py:1-46](file://localmanus-backend/core/sandbox.py#L1-L46)
+- [file_manager.py:1-217](file://localmanus-backend/core/file_manager.py#L1-L217)
+- [models.py:1-80](file://localmanus-backend/core/models.py#L1-L80)
+- [database.py:1-17](file://localmanus-backend/core/database.py#L1-L17)
+- [Omnibox.tsx:1-200](file://localmanus-ui/app/components/Omnibox.tsx#L1-L200)
 
 **章节来源**
-- [main.py](file://localmanus-backend/main.py#L1-L476)
-- [localmanus_architecture.md](file://localmanus_architecture.md#L1-L172)
+- [main.py:1-524](file://localmanus-backend/main.py#L1-L524)
+- [localmanus_architecture.md:1-172](file://localmanus_architecture.md#L1-L172)
 
 ## 核心组件
 - API 网关（FastAPI）
@@ -140,17 +161,22 @@ NGINX --> SANDBOX
   - **LOCAL模式**：连接到现有沙箱实例，支持共享环境
   - **ONLINE模式**：按需启动 Docker 容器，提供完全隔离的用户环境
   - **向后兼容**：保持与旧代码的 API 兼容性
+- **文件管理器（FileManager）**
+  - **新增** 统一文件管理器，抽象主机和沙箱环境的文件操作
+  - 支持自动路由到适当存储位置（主机或沙箱）
+  - 提供统一的读写接口，支持字符串和字节数据
 
 **章节来源**
-- [main.py](file://localmanus-backend/main.py#L61-L476)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L11-L150)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L11-L49)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L18-L143)
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L103-L312)
-- [sandbox.py](file://localmanus-backend/core/sandbox.py#L11-L46)
+- [main.py:61-524](file://localmanus-backend/main.py#L61-L524)
+- [orchestrator.py:11-150](file://localmanus-backend/core/orchestrator.py#L11-L150)
+- [agent_manager.py:11-49](file://localmanus-backend/core/agent_manager.py#L11-L49)
+- [skill_manager.py:18-143](file://localmanus-backend/core/skill_manager.py#L18-L143)
+- [firecracker_sandbox.py:103-325](file://localmanus-backend/core/firecracker_sandbox.py#L103-L325)
+- [sandbox.py:11-46](file://localmanus-backend/core/sandbox.py#L11-L46)
+- [file_manager.py:24-217](file://localmanus-backend/core/file_manager.py#L24-L217)
 
 ## 架构总览
-**更新** 下图展示 LocalManus 基于 AgentScope 的动态多智能体系统与 agent-infra/sandbox 系统的集成关系，涵盖双模式架构、REST API 通信、容器隔离与多环境支持，以及生产环境的健康检查和监控机制。
+下图展示 LocalManus 基于 AgentScope 的动态多智能体系统与 agent-infra/sandbox 系统的集成关系，涵盖双模式架构、REST API 通信、容器隔离与多环境支持，以及生产环境的健康检查和监控机制。
 
 ```mermaid
 graph TB
@@ -172,18 +198,21 @@ SANDBOX --> VNC["VNC 密码认证"]
 SANDBOX --> Health["健康检查"]
 API --> Feedback["自纠正循环"]
 Feedback --> Finalizer["结果合成"]
+API --> FileManager["文件管理器"]
+FileManager --> HostFS["主机文件系统"]
+FileManager --> SandboxFS["沙箱文件系统"]
 ```
 
 **图表来源**
-- [localmanus_architecture.md](file://localmanus_architecture.md#L6-L31)
-- [SANDBOX_MIGRATION_GUIDE.md](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L13-L25)
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L103-L312)
-- [docker-compose.prod.yml](file://docker-compose.prod.yml#L12-L31)
+- [localmanus_architecture.md:6-31](file://localmanus_architecture.md#L6-L31)
+- [SANDBOX_MIGRATION_GUIDE.md:13-25](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L13-L25)
+- [firecracker_sandbox.py:103-325](file://localmanus-backend/core/firecracker_sandbox.py#L103-L325)
+- [docker-compose.prod.yml:12-31](file://docker-compose.prod.yml#L12-L31)
 
 ## 组件详解
 
 ### agent-infra/sandbox 系统架构
-**更新** 基于 agent-infra/sandbox 的全新沙箱系统，提供双模式支持和丰富的开发环境功能。
+基于 agent-infra/sandbox 的全新沙箱系统，提供双模式支持和丰富的开发环境功能。
 
 #### 双模式架构
 - **LOCAL 模式（开发/共享）**
@@ -218,14 +247,14 @@ API-->>Client : 操作结果
 ```
 
 **图表来源**
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L103-L312)
+- [firecracker_sandbox.py:103-325](file://localmanus-backend/core/firecracker_sandbox.py#L103-L325)
 
 **章节来源**
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L103-L312)
-- [SANDBOX_MIGRATION_GUIDE.md](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L27-L40)
+- [firecracker_sandbox.py:103-325](file://localmanus-backend/core/firecracker_sandbox.py#L103-L325)
+- [SANDBOX_MIGRATION_GUIDE.md:27-40](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L27-L40)
 
 ### 沙箱生命周期管理
-**更新** 基于 Docker 容器的生命周期管理，支持自动启动、资源清理和状态恢复。
+基于 Docker 容器的生命周期管理，支持自动启动、资源清理和状态恢复。
 
 #### LOCAL 模式生命周期
 - 连接到现有沙箱实例
@@ -260,15 +289,15 @@ ReturnLocal --> End
 ```
 
 **图表来源**
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L137-L203)
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L205-L233)
+- [firecracker_sandbox.py:137-203](file://localmanus-backend/core/firecracker_sandbox.py#L137-L203)
+- [firecracker_sandbox.py:205-233](file://localmanus-backend/core/firecracker_sandbox.py#L205-L233)
 
 **章节来源**
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L137-L233)
-- [test_sandbox.py](file://localmanus-backend/scripts/test_sandbox.py#L13-L191)
+- [firecracker_sandbox.py:137-233](file://localmanus-backend/core/firecracker_sandbox.py#L137-L233)
+- [test_sandbox.py:13-191](file://localmanus-backend/scripts/test_sandbox.py#L13-L191)
 
 ### REST API 通信机制
-**更新** 基于 HTTP REST API 的通信方式，提供统一的接口规范和错误处理。
+基于 HTTP REST API 的通信方式，提供统一的接口规范和错误处理。
 
 #### 核心 API 端点
 - `/v1/sandbox`：获取沙箱上下文信息
@@ -321,14 +350,14 @@ class SandboxInfo {
 ```
 
 **图表来源**
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L103-L312)
+- [firecracker_sandbox.py:103-325](file://localmanus-backend/core/firecracker_sandbox.py#L103-L325)
 
 **章节来源**
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L31-L102)
-- [SANDBOX_MIGRATION_GUIDE.md](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L153-L177)
+- [firecracker_sandbox.py:31-102](file://localmanus-backend/core/firecracker_sandbox.py#L31-L102)
+- [SANDBOX_MIGRATION_GUIDE.md:153-177](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L153-L177)
 
 ### 开发环境集成
-**更新** 新系统提供完整的开发环境支持，包括 VSCode 服务器、Jupyter、浏览器自动化等。
+新系统提供完整的开发环境支持，包括 VSCode 服务器、Jupyter、浏览器自动化等。
 
 #### VSCode Server
 - 内置 VSCode Server，支持远程开发
@@ -346,11 +375,11 @@ class SandboxInfo {
 - 提供 VNC 可视化调试
 
 **章节来源**
-- [SANDBOX_MIGRATION_GUIDE.md](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L7-L11)
-- [SANDBOX_QUICKSTART.md](file://localmanus-backend/scripts/SANDBOX_QUICKSTART.md#L79-L84)
+- [SANDBOX_MIGRATION_GUIDE.md:7-11](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L7-L11)
+- [SANDBOX_QUICKSTART.md:79-84](file://localmanus-backend/scripts/SANDBOX_QUICKSTART.md#L79-L84)
 
 ### 向后兼容性
-**更新** 为保持与旧代码的兼容性，系统提供了向后兼容适配器。
+为保持与旧代码的兼容性，系统提供了向后兼容适配器。
 
 #### LegacySandboxAdapter
 - 包装新的 SandboxManager
@@ -362,8 +391,8 @@ class SandboxInfo {
 - 保持现有代码无需修改即可继续使用
 
 **章节来源**
-- [sandbox.py](file://localmanus-backend/core/sandbox.py#L11-L46)
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L292-L312)
+- [sandbox.py:11-46](file://localmanus-backend/core/sandbox.py#L11-L46)
+- [firecracker_sandbox.py:292-325](file://localmanus-backend/core/firecracker_sandbox.py#L292-L325)
 
 ### 智能体编排与技能系统
 - Manager/Planner/ReActAgent：标准化输入、生成动态 DAG、执行工具与自纠正
@@ -400,14 +429,14 @@ SkillManager --> FileOperationSkill : "注册工具"
 ```
 
 **图表来源**
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L11-L49)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L18-L143)
-- [file_ops.py](file://localmanus-backend/skills/file-operations/file_ops.py#L9-L165)
+- [agent_manager.py:11-49](file://localmanus-backend/core/agent_manager.py#L11-L49)
+- [skill_manager.py:18-143](file://localmanus-backend/core/skill_manager.py#L18-L143)
+- [file_ops.py:9-199](file://localmanus-backend/skills/file-operations/file_ops.py#L9-L199)
 
 **章节来源**
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L11-L49)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L18-L143)
-- [file_ops.py](file://localmanus-backend/skills/file-operations/file_ops.py#L9-L165)
+- [agent_manager.py:11-49](file://localmanus-backend/core/agent_manager.py#L11-L49)
+- [skill_manager.py:18-143](file://localmanus-backend/core/skill_manager.py#L18-L143)
+- [file_ops.py:9-199](file://localmanus-backend/skills/file-operations/file_ops.py#L9-L199)
 
 ### API 工作流（SSE 与 WebSocket）
 - SSE：/api/chat 支持多轮对话，内部协议包含内容块、同步事件与元数据事件
@@ -432,15 +461,15 @@ API-->>FE : WebSocket 消息
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L392-L476)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L16-L96)
+- [main.py:392-524](file://localmanus-backend/main.py#L392-L524)
+- [orchestrator.py:16-96](file://localmanus-backend/core/orchestrator.py#L16-L96)
 
 **章节来源**
-- [main.py](file://localmanus-backend/main.py#L392-L476)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L16-L96)
+- [main.py:392-524](file://localmanus-backend/main.py#L392-L524)
+- [orchestrator.py:16-96](file://localmanus-backend/core/orchestrator.py#L16-L96)
 
 ### 生产环境配置与部署
-**更新** 新增生产就绪的部署配置，包括 Docker Compose 生产配置、Nginx 反向代理、健康检查和 VNC 密码认证。
+新增生产就绪的部署配置，包括 Docker Compose 生产配置、Nginx 反向代理、健康检查和 VNC 密码认证。
 
 #### Docker Compose 生产配置
 - **sandbox 服务**：AIO Sandbox 服务，使用 `ghcr.io/agent-infra/sandbox:1.0.0.150` 镜像
@@ -465,12 +494,110 @@ API-->>FE : WebSocket 消息
 - **启动延迟**：后端服务启动延迟40秒，沙箱服务启动延迟60秒
 
 **章节来源**
-- [docker-compose.prod.yml](file://docker-compose.prod.yml#L1-L51)
-- [nginx.prod.conf](file://nginx/nginx.prod.conf#L1-L137)
-- [Dockerfile](file://localmanus-backend/Dockerfile#L43-L45)
+- [docker-compose.prod.yml:1-51](file://docker-compose.prod.yml#L1-L51)
+- [nginx.prod.conf:1-137](file://nginx/nginx.prod.conf#L1-L137)
+- [Dockerfile:43-45](file://localmanus-backend/Dockerfile#L43-L45)
+
+## 文件上传与管理
+
+### 文件上传功能
+**新增** 系统现在支持完整的文件上传功能，包括二进制文件的base64编码传输。
+
+#### API 端点
+- `/api/upload`：上传文件到用户专属目录
+- `/api/files`：列出用户上传的所有文件
+- `/api/files/{file_id}`：下载指定文件
+- `/api/files/{file_id}`：删除指定文件
+
+#### 文件上传流程
+```mermaid
+sequenceDiagram
+participant Client as "客户端"
+participant API as "文件上传API"
+participant FS as "文件系统"
+participant DB as "数据库"
+Client->>API : POST /api/upload (multipart/form-data)
+API->>FS : 保存文件到用户目录
+API->>DB : 创建文件记录
+DB-->>API : 返回文件信息
+API-->>Client : JSON响应
+```
+
+**图表来源**
+- [main.py:111-150](file://localmanus-backend/main.py#L111-L150)
+
+#### 文件管理器
+**新增** FileManager 类提供统一的文件操作接口，支持主机和沙箱文件系统的自动路由。
+
+##### 主要功能
+- **自动路由**：根据路径自动决定存储位置（主机或沙箱）
+- **统一接口**：提供一致的读写接口，支持字符串和字节数据
+- **二进制支持**：原生支持二进制文件的读写操作
+- **路径解析**：支持相对路径解析到沙箱家目录
+
+##### 使用示例
+```python
+fm = FileManager(sandbox_manager, user_id)
+# 写入文件（自动路由到沙箱）
+await fm.write("/home/gem/project/main.py", code_content)
+
+# 读取文件（自动路由到沙箱）
+content = await fm.read("/home/gem/project/main.py")
+
+# 写入二进制文件
+await fm.write("/home/gem/data.bin", binary_data)
+```
+
+**章节来源**
+- [main.py:111-150](file://localmanus-backend/main.py#L111-L150)
+- [file_manager.py:24-217](file://localmanus-backend/core/file_manager.py#L24-L217)
+- [models.py:29-46](file://localmanus-backend/core/models.py#L29-L46)
+- [database.py:11-17](file://localmanus-backend/core/database.py#L11-L17)
+
+### 前端文件上传组件
+**新增** Omnibox.tsx 组件提供完整的文件上传界面，支持多文件选择和实时上传状态显示。
+
+#### 功能特性
+- **多文件选择**：支持同时选择多个文件
+- **实时上传**：逐个文件上传，显示上传进度
+- **文件列表**：显示已上传文件的详细信息
+- **移除功能**：允许移除不需要的文件
+- **认证集成**：自动添加访问令牌到请求头
+
+#### 用户界面
+- **文件图标**：显示文件类型图标
+- **文件大小**：自动格式化文件大小显示
+- **上传指示器**：显示当前上传状态
+- **错误处理**：友好的错误消息提示
+
+**章节来源**
+- [Omnibox.tsx:1-200](file://localmanus-ui/app/components/Omnibox.tsx#L1-L200)
+
+### 数据库模型
+**新增** UploadedFile 模型用于存储文件元数据，支持文件的完整生命周期管理。
+
+#### 模型字段
+- **id**：文件唯一标识符
+- **user_id**：关联的用户ID
+- **filename**：服务器端存储的文件名
+- **original_filename**：原始文件名
+- **file_path**：文件在服务器上的完整路径
+- **file_size**：文件大小（字节）
+- **mime_type**：MIME类型
+- **uploaded_at**：上传时间戳
+
+#### 数据库操作
+- **创建表**：自动创建 UploadedFile 表结构
+- **查询操作**：支持按用户ID查询文件列表
+- **文件下载**：通过文件ID获取文件信息
+- **文件删除**：删除文件记录和物理文件
+
+**章节来源**
+- [models.py:29-46](file://localmanus-backend/core/models.py#L29-L46)
+- [database.py:11-17](file://localmanus-backend/core/database.py#L11-L17)
 
 ## 依赖关系分析
-**更新** 依赖关系已完全重构，移除了对 Firecracker 的依赖，新增对 agent-infra/sandbox 的依赖。
+依赖关系已完全重构，移除了对 Firecracker 的依赖，新增对 agent-infra/sandbox 的依赖。
 
 - 组件耦合
   - main.py 依赖 orchestrator、agent_manager、skill_manager、config 等模块
@@ -478,6 +605,9 @@ API-->>FE : WebSocket 消息
   - skill_manager 依赖 skills 目录下的具体技能实现
   - **firecracker_sandbox.py**：**重构为** agent-infra/sandbox 统一管理器，向上提供沙箱生命周期管理
   - **sandbox.py**：**新增** 向后兼容适配器，保持旧代码兼容性
+  - **file_manager.py**：**新增** 统一文件管理器，抽象主机和沙箱文件操作
+  - **models.py**：**新增** 数据模型定义，支持文件上传功能
+  - **database.py**：**新增** 数据库初始化和会话管理
 - 外部依赖
   - AgentScope：多智能体框架与工具注册
   - **agent-infra/sandbox**：**新增** Docker 容器沙箱系统
@@ -499,6 +629,10 @@ FC --> SC["SandboxClient"]
 FC --> SI["SandboxInfo"]
 M --> LEG["core/sandbox.py"]
 LEG --> SB
+M --> FM["core/file_manager.py"]
+FM --> SB
+M --> MODELS["core/models.py"]
+MODELS --> DB["core/database.py"]
 subgraph "外部服务"
 NGINX["Nginx 反向代理"]
 SANDBOX["AIO Sandbox 服务"]
@@ -508,25 +642,31 @@ SANDBOX --> SB
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L1-L476)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L1-L150)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L1-L49)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L1-L143)
-- [file_ops.py](file://localmanus-backend/skills/file-operations/file_ops.py#L1-L165)
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L1-L312)
-- [sandbox.py](file://localmanus-backend/core/sandbox.py#L1-L46)
+- [main.py:1-524](file://localmanus-backend/main.py#L1-L524)
+- [orchestrator.py:1-150](file://localmanus-backend/core/orchestrator.py#L1-L150)
+- [agent_manager.py:1-49](file://localmanus-backend/core/agent_manager.py#L1-L49)
+- [skill_manager.py:1-143](file://localmanus-backend/core/skill_manager.py#L1-L143)
+- [file_ops.py:1-199](file://localmanus-backend/skills/file-operations/file_ops.py#L1-L199)
+- [firecracker_sandbox.py:1-325](file://localmanus-backend/core/firecracker_sandbox.py#L1-L325)
+- [sandbox.py:1-46](file://localmanus-backend/core/sandbox.py#L1-L46)
+- [file_manager.py:1-217](file://localmanus-backend/core/file_manager.py#L1-L217)
+- [models.py:1-80](file://localmanus-backend/core/models.py#L1-L80)
+- [database.py:1-17](file://localmanus-backend/core/database.py#L1-L17)
 
 **章节来源**
-- [main.py](file://localmanus-backend/main.py#L1-L476)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L1-L150)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L1-L49)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L1-L143)
-- [file_ops.py](file://localmanus-backend/skills/file-operations/file_ops.py#L1-L165)
-- [firecracker_sandbox.py](file://localmanus-backend/core/firecracker_sandbox.py#L1-L312)
-- [sandbox.py](file://localmanus-backend/core/sandbox.py#L1-L46)
+- [main.py:1-524](file://localmanus-backend/main.py#L1-L524)
+- [orchestrator.py:1-150](file://localmanus-backend/core/orchestrator.py#L1-L150)
+- [agent_manager.py:1-49](file://localmanus-backend/core/agent_manager.py#L1-L49)
+- [skill_manager.py:1-143](file://localmanus-backend/core/skill_manager.py#L1-L143)
+- [file_ops.py:1-199](file://localmanus-backend/skills/file-operations/file_ops.py#L1-L199)
+- [firecracker_sandbox.py:1-325](file://localmanus-backend/core/firecracker_sandbox.py#L1-L325)
+- [sandbox.py:1-46](file://localmanus-backend/core/sandbox.py#L1-L46)
+- [file_manager.py:1-217](file://localmanus-backend/core/file_manager.py#L1-L217)
+- [models.py:1-80](file://localmanus-backend/core/models.py#L1-L80)
+- [database.py:1-17](file://localmanus-backend/core/database.py#L1-L17)
 
 ## 性能与资源优化
-**更新** 新系统提供了不同的性能特征和优化策略。
+新系统提供了不同的性能特征和优化策略。
 
 ### LOCAL 模式性能
 - **启动时间**：几乎为零，直接连接到现有沙箱
@@ -537,6 +677,15 @@ SANDBOX --> SB
 - **启动时间**：约 3 秒（容器启动）
 - **资源消耗**：每个容器独立资源，可配置 CPU 和内存限制
 - **适用场景**：生产环境、多用户、需要隔离的场景
+
+### 文件操作优化
+**新增** 文件管理器提供了多种优化策略：
+
+- **自动路由**：根据路径自动选择最优存储位置
+- **连接复用**：SandboxClient 使用 requests.Session 实现连接复用
+- **超时配置**：可配置 API 调用超时时间
+- **二进制优化**：原生支持二进制文件，避免不必要的编码转换
+- **路径解析**：智能路径解析，减少不必要的文件系统查询
 
 ### 优化策略
 - **容器资源限制**：通过 Docker 参数限制 CPU 和内存使用
@@ -553,9 +702,10 @@ SANDBOX --> SB
 - **API 调用监控**：记录 API 调用次数、响应时间和错误率
 - **性能指标**：收集启动时间、执行时间、资源使用等指标
 - **健康检查**：多层健康检查机制，确保系统稳定性
+- **文件操作监控**：监控文件上传、下载、删除操作的性能
 
 ## 故障排查指南
-**更新** 新系统提供了不同的故障排查方法和常见问题解决方案。
+新系统提供了不同的故障排查方法和常见问题解决方案。
 
 ### LOCAL 模式故障排查
 - **无法连接到沙箱**
@@ -576,6 +726,25 @@ SANDBOX --> SB
   - 查找占用端口的进程：`lsof -i :8080`
   - 修改端口配置或释放占用端口
   - 使用自动端口分配
+
+### 文件上传故障排查
+**新增** 文件上传功能的专门故障排查指南：
+
+- **文件上传失败**
+  - 检查用户认证状态：确认访问令牌有效
+  - 验证文件大小限制：默认支持大文件上传
+  - 检查磁盘空间：确保有足够的存储空间
+  - 验证文件权限：确认用户有写入权限
+
+- **文件读取错误**
+  - 检查文件路径：确认文件存在于正确的存储位置
+  - 验证文件权限：确认用户有读取权限
+  - 检查文件完整性：确认文件没有损坏
+
+- **二进制文件问题**
+  - 验证 base64 编码：确认二进制数据正确编码
+  - 检查文件类型：确认 MIME 类型设置正确
+  - 验证文件大小：确认文件大小在限制范围内
 
 ### 生产环境故障排查
 - **Nginx 代理问题**
@@ -606,12 +775,14 @@ SANDBOX --> SB
   - 清理停止的容器
 
 **章节来源**
-- [SANDBOX_MIGRATION_GUIDE.md](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L262-L304)
-- [SANDBOX_QUICKSTART.md](file://localmanus-backend/scripts/SANDBOX_QUICKSTART.md#L86-L100)
-- [test_sandbox.py](file://localmanus-backend/scripts/test_sandbox.py#L13-L191)
+- [SANDBOX_MIGRATION_GUIDE.md:262-304](file://localmanus-backend/scripts/SANDBOX_MIGRATION_GUIDE.md#L262-L304)
+- [SANDBOX_QUICKSTART.md:86-100](file://localmanus-backend/scripts/SANDBOX_QUICKSTART.md#L86-L100)
+- [test_sandbox.py:13-191](file://localmanus-backend/scripts/test_sandbox.py#L13-L191)
 
 ## 结论
-**更新** LocalManus 通过迁移到 agent-infra/sandbox 系统，实现了从 Firecracker 微虚拟机到基于 Docker 容器的现代化沙箱架构。新系统提供了更好的易用性、更丰富的功能集和更强的可扩展性。通过双模式架构（LOCAL 和 ONLINE），系统能够在开发效率和生产安全性之间找到最佳平衡点。新的 REST API 接口简化了集成，而 VSCode Server、Jupyter、浏览器自动化等特性为用户提供了完整的开发环境。
+LocalManus 通过迁移到 agent-infra/sandbox 系统，实现了从 Firecracker 微虚拟机到基于 Docker 容器的现代化沙箱架构。新系统提供了更好的易用性、更丰富的功能集和更强的可扩展性。通过双模式架构（LOCAL 和 ONLINE），系统能够在开发效率和生产安全性之间找到最佳平衡点。新的 REST API 接口简化了集成，而 VSCode Server、Jupyter、浏览器自动化等特性为用户提供了完整的开发环境。
+
+**更新** 新增的二进制文件上传功能进一步增强了系统的实用性，支持base64编码的二进制数据传输，为沙箱环境提供了完整的文件操作能力。统一的文件管理器抽象了主机和沙箱文件系统的差异，为技能开发者提供了透明的文件操作接口。
 
 生产环境配置进一步增强了系统的稳定性，包括健康检查机制、VNC 密码认证、Nginx 反向代理和安全配置。这些改进使得系统更适合在生产环境中部署和维护。
 
@@ -631,6 +802,10 @@ MODEL_NAME=gpt-4
 SANDBOX_MODE=local          # local 或 online
 SANDBOX_LOCAL_URL=http://localhost:8080
 USE_CHINA_MIRROR=false      # 在中国使用镜像
+
+# 文件上传配置
+UPLOAD_DIR=./uploads       # 上传文件存储目录
+MAX_FILE_SIZE=104857600    # 最大文件大小（100MB）
 ```
 
 #### Docker Compose
@@ -649,27 +824,34 @@ USE_CHINA_MIRROR=false      # 在中国使用镜像
 - **健康检查**：多层健康检查确保系统稳定性
 
 **章节来源**
-- [.env.example](file://localmanus-backend/.env.example#L1-L12)
-- [docker-compose.yml](file://docker-compose.yml#L1-L88)
-- [docker-compose.prod.yml](file://docker-compose.prod.yml#L1-L51)
-- [SANDBOX_QUICKSTART.md](file://localmanus-backend/scripts/SANDBOX_QUICKSTART.md#L5-L32)
-- [deploy-with-nginx.sh](file://deploy-with-nginx.sh#L1-L185)
+- [.env.example:1-12](file://localmanus-backend/.env.example#L1-L12)
+- [docker-compose.yml:1-88](file://docker-compose.yml#L1-L88)
+- [docker-compose.prod.yml:1-51](file://docker-compose.prod.yml#L1-L51)
+- [SANDBOX_QUICKSTART.md:5-32](file://localmanus-backend/scripts/SANDBOX_QUICKSTART.md#L5-L32)
+- [deploy-with-nginx.sh:1-185](file://deploy-with-nginx.sh#L1-L185)
 
 ### 监控指标建议
 **更新** 新系统提供了不同的监控指标。
 
 #### 后端服务
 - 健康检查、请求延迟、错误率、并发连接数
-- **新增** 沙箱连接数、API 调用成功率
+- **新增** 沙箱连接数、API 调用成功率、文件上传成功率
 
 #### 沙箱系统
 - **LOCAL 模式**：连接池状态、共享资源使用率
 - **ONLINE 模式**：容器数量、容器启动时间、资源使用情况
 - **通用**：沙箱可用性、响应时间、错误率
 
+#### 文件操作监控
+**新增** 文件上传和下载的专门监控指标：
+- 文件上传成功率、平均上传时间、失败原因分类
+- 文件下载成功率、平均下载时间、失败原因分类
+- 存储空间使用情况、文件数量统计
+- 二进制文件处理统计、base64 编码解码性能
+
 #### 技能执行
 - 工具调用成功率、平均执行时长、失败原因分类
-- **新增** 沙箱操作统计、资源消耗分析
+- **新增** 沙箱操作统计、资源消耗分析、文件操作统计
 
 #### Docker 容器监控
 - 容器状态、CPU 使用率、内存使用率、网络吞吐
@@ -684,3 +866,30 @@ USE_CHINA_MIRROR=false      # 在中国使用镜像
 - **新增** 多层健康检查状态
 - **新增** 服务依赖关系监控
 - **新增** 自动故障转移检测
+
+### 文件操作最佳实践
+**新增** 为文件上传和管理提供最佳实践指导：
+
+#### 文件上传
+- **批量上传**：前端支持多文件选择，逐个上传以提供更好的用户体验
+- **进度反馈**：实时显示上传进度和状态
+- **错误处理**：友好的错误消息和重试机制
+- **安全验证**：验证文件类型和大小，防止恶意文件上传
+
+#### 文件存储
+- **用户隔离**：每个用户有独立的上传目录
+- **文件命名**：使用唯一文件名避免冲突
+- **元数据管理**：数据库记录文件元数据便于检索
+- **清理策略**：定期清理过期文件和临时文件
+
+#### 文件访问
+- **路径安全**：验证文件路径防止目录遍历攻击
+- **权限控制**：确保用户只能访问自己的文件
+- **类型检测**：自动检测文件类型和MIME类型
+- **缓存优化**：合理使用缓存提高文件访问性能
+
+**章节来源**
+- [main.py:111-150](file://localmanus-backend/main.py#L111-L150)
+- [file_manager.py:73-122](file://localmanus-backend/core/file_manager.py#L73-L122)
+- [models.py:29-46](file://localmanus-backend/core/models.py#L29-L46)
+- [Omnibox.tsx:29-77](file://localmanus-ui/app/components/Omnibox.tsx#L29-L77)

@@ -247,22 +247,26 @@ class ReActAgent(ASReActAgent):
             tools_metadata=tools_metadata
         )
 
-    async def run_stream(self, messages: list) -> AsyncGenerator[Dict[str, Any], None]:
+    async def run_stream(self, messages: list):
         """
-        Streaming ReAct loop using AgentScope's native agent capabilities.
+        Manual ReAct loop with streaming support.
         
-        This method uses the parent ReActAgent's built-in reply mechanism
-        which handles streaming, tool execution, and the ReAct loop internally.
+        Implements: Think → Act → Observe cycle
+        - THINK: Stream reasoning content to frontend in real-time
+        - ACT: Execute tool calls and notify frontend
+        - OBSERVE: Feed tool results back to model
         
-        Note: True token-by-token streaming through the ReAct loop is complex because
-        the agent needs complete responses to decide on tool calls. We yield:
-        1. Tool call notifications as they happen
-        2. Final response content streamed progressively
+        Repeats until task is complete or max iterations reached.
+        
+        Yields:
+            Dict[str, Any]: Content chunks with 'content' key, or internal events like '_sync'
         """
+        MAX_ITERATIONS = 1
+        iteration = 0
         new_messages = []
         
         try:
-            # Convert dict messages to Msg objects if needed
+            # Convert dict messages to Msg objects
             msg_objects = []
             for m in messages:
                 if isinstance(m, dict):
@@ -274,79 +278,83 @@ class ReActAgent(ASReActAgent):
                 else:
                     msg_objects.append(m)
             
-            # Get the last user message to respond to
+            # Get the last user message
             last_msg = msg_objects[-1] if msg_objects else None
-            
             if not last_msg:
                 yield {"content": "Error: No message to respond to."}
                 return
             
-            # Create a queue to receive content chunks
-            content_queue = asyncio.Queue()
-            response_holder = {"response": None, "done": False}
+            # Add to agent's memory
+            await self.memory.add(last_msg)
             
-            async def generate_response():
-                """Run the reply in background and stream chunks."""
-                try:
-                    # Call the parent ReActAgent's reply method
-                    response = await self(last_msg)
-                    response_holder["response"] = response
-                    
-                    if response:
-                        content = self._extract_content(response)
-                        
-                        # Stream content in chunks
-                        if content:
-                            chunk_size = 10  # Characters per chunk
-                            for i in range(0, len(content), chunk_size):
-                                chunk = content[i:i + chunk_size]
-                                await content_queue.put({"content": chunk})
-                                # Small delay to allow consumer to process
-                                await asyncio.sleep(0.01)
-                        
-                        # Add to history sync
-                        if hasattr(response, 'role') and hasattr(response, 'content'):
-                            new_messages.append({
-                                "role": response.role,
-                                "content": response.content
-                            })
-                        
-                        # Check for tool calls in response
-                        tool_calls = self._extract_tool_calls(response)
-                        if tool_calls:
-                            for tc in tool_calls:
-                                name = tc.get('function', {}).get('name', tc.get('name', 'unknown'))
-                                await content_queue.put({"content": f"\n\n🔧 **[Tool Used]**: `{name}`\n"})
+            # === REACT LOOP ===
+            while iteration < MAX_ITERATIONS:
+                iteration += 1
+                logger.info(f"=== ReAct Iteration {iteration} ===")
                 
-                except Exception as e:
-                    logger.error(f"Error in generate_response: {e}")
-                    await content_queue.put({"content": f"\n\n❌ **[Error]**: {str(e)}\n"})
-                finally:
-                    response_holder["done"] = True
-                    await content_queue.put(None)  # Signal completion
-            
-            # Start the response generation task
-            generation_task = asyncio.create_task(generate_response())
-            
-            # Yield an initial empty chunk to establish the connection
-            yield {"content": ""}
-            
-            # Yield chunks as they become available
-            try:
-                while True:
-                    chunk = await content_queue.get()
-                    if chunk is None:
-                        break
-                    yield chunk
-            finally:
-                # Ensure the generation task is cleaned up
-                if not generation_task.done():
-                    generation_task.cancel()
-                    try:
-                        await generation_task
-                    except asyncio.CancelledError:
-                        pass
+                # === STEP 1: THINK (Reasoning) ===
+                yield {"content": f"\n🧠 **[Thinking... (Iteration {iteration})]**\n\n"}
+                
+                # Stream reasoning from model
+                reasoning_msg = await self._stream_reasoning()
+                
+                # Check if we have tool calls
+                tool_calls = self._extract_tool_calls_from_msg(reasoning_msg)
+                
+                # Extract and yield text content
+                text_content = self._extract_content(reasoning_msg)
+                if text_content:
+                    yield {"content": text_content}
+                
+                # === STEP 2: ACT (Tool Execution) ===
+                if not tool_calls:
+                    # No more tool calls - task complete
+                    logger.info("No tool calls - task complete")
+                    break
+                
+                # Execute each tool call
+                for tc in tool_calls:
+                    tool_name = tc.get('function', {}).get('name', tc.get('name', 'unknown'))
+                    tool_args = tc.get('function', {}).get('arguments', '{}')
                     
+                    # Notify frontend about tool call
+                    yield {"content": f"\n\n🔧 **[Tool Call]** `{tool_name}`\n"}
+                    if tool_args and tool_args != '{}':
+                        try:
+                            args_display = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
+                            yield {"content": f"```json\n{json.dumps(args_display, indent=2, ensure_ascii=False)}\n```\n"}
+                        except:
+                            pass
+                    
+                    # Execute tool
+                    yield {"content": "⏳ *Executing...*\n"}
+                    
+                    try:
+                        tool_result = await self._execute_tool(tc)
+                        
+                        # Yield tool result
+                        result_text = self._format_tool_result(tool_result)
+                        yield {"content": f"✅ **[Result]**\n{result_text}\n"}
+                        
+                        # Add tool result to memory for next iteration
+                        await self._add_tool_result_to_memory(tc, tool_result)
+                        
+                    except Exception as e:
+                        error_msg = f"❌ **[Error]**: {str(e)}\n"
+                        yield {"content": error_msg}
+                        await self._add_tool_result_to_memory(tc, f"Error: {str(e)}")
+                
+                # === STEP 3: OBSERVE (Continue Loop) ===
+                # The tool results are now in memory, next iteration will use them
+                yield {"content": "\n---\n"}
+            
+            # Final summary if max iterations reached
+            if iteration >= MAX_ITERATIONS:
+                yield {"content": f"\n⚠️ **Reached maximum iterations ({MAX_ITERATIONS})**\n"}
+            
+            # Store for sync
+            new_messages.append({"role": "assistant", "content": text_content or ""})
+            
         except Exception as e:
             logger.error(f"Error in ReAct loop: {str(e)}", exc_info=True)
             yield {"content": f"\n\n❌ **[Error]**: {str(e)}\n"}
@@ -354,6 +362,165 @@ class ReActAgent(ASReActAgent):
         finally:
             if new_messages:
                 yield {"_sync": new_messages}
+    
+    async def _stream_reasoning(self) -> Msg:
+        """
+        Stream reasoning from the model.
+        
+        Returns the complete message after streaming.
+        """
+        from agentscope.agent._react_agent import _MemoryMark
+        
+        # Handle plan notebook hints
+        if self.plan_notebook:
+            hint_msg = await self.plan_notebook.get_current_hint()
+            if hint_msg:
+                await self.memory.add(hint_msg, marks=_MemoryMark.HINT)
+        
+        # Format prompt with system prompt and memory
+        prompt = await self.formatter.format(
+            msgs=[
+                Msg("system", self.sys_prompt, "system"),
+                *await self.memory.get_memory(),
+            ],
+        )
+        
+        # Clear hint messages after use
+        await self.memory.delete_by_mark(mark=_MemoryMark.HINT)
+        
+        # Call model with tools
+        res = await self.model(
+            prompt,
+            tools=self.toolkit.get_json_schemas(),
+            tool_choice=None,
+        )
+        
+        # Process streaming response
+        msg = Msg(name=self.name, content=[], role="assistant")
+        
+        if self.model.stream:
+            # Stream and accumulate content
+            async for content_chunk in res:
+                msg.content = content_chunk.content
+        else:
+            # Non-streaming: just use the result
+            msg.content = list(res.content) if hasattr(res, 'content') else res
+        
+        # Add to memory
+        await self.memory.add(msg)
+        
+        return msg
+    
+    def _extract_tool_calls_from_msg(self, msg: Msg) -> list:
+        """Extract tool calls from a message object."""
+        tool_calls = []
+        
+        if not hasattr(msg, 'content'):
+            return tool_calls
+        
+        content = msg.content
+        if not isinstance(content, list):
+            return tool_calls
+        
+        for block in content:
+            # Object format
+            if hasattr(block, 'type') and block.type == 'tool_use':
+                tc = {
+                    'id': getattr(block, 'id', f'tool_{len(tool_calls)}'),
+                    'name': getattr(block, 'name', 'unknown'),
+                    'function': {
+                        'name': getattr(block, 'name', 'unknown'),
+                        'arguments': getattr(block, 'input', '{}')
+                    }
+                }
+                tool_calls.append(tc)
+            # Dict format
+            elif isinstance(block, dict) and block.get('type') == 'tool_use':
+                tc = {
+                    'id': block.get('id', f'tool_{len(tool_calls)}'),
+                    'name': block.get('name', 'unknown'),
+                    'function': {
+                        'name': block.get('name', 'unknown'),
+                        'arguments': block.get('input', '{}')
+                    }
+                }
+                tool_calls.append(tc)
+        
+        return tool_calls
+    
+    async def _execute_tool(self, tool_call: Dict) -> Any:
+        """Execute a single tool call."""
+        # Format for toolkit
+        tc_formatted = {
+            'id': tool_call.get('id', 'unknown'),
+            'name': tool_call.get('name') or tool_call.get('function', {}).get('name', 'unknown'),
+            'input': tool_call.get('input') or tool_call.get('function', {}).get('arguments', {})
+        }
+        
+        # Parse arguments if string
+        if isinstance(tc_formatted['input'], str):
+            try:
+                tc_formatted['input'] = json.loads(tc_formatted['input'])
+            except:
+                tc_formatted['input'] = {}
+        
+        # Execute via toolkit
+        from agentscope.message import ToolUseBlock
+        tool_block = ToolUseBlock(
+            type="tool_use",
+            id=tc_formatted['id'],
+            name=tc_formatted['name'],
+            input=tc_formatted['input']
+        )
+        
+        # Call tool and collect results
+        results = []
+        gen = await self.toolkit.call_tool_function(tool_block)
+        async for response in gen:
+            results.append(response)
+        
+        return results[0] if len(results) == 1 else results
+    
+    def _format_tool_result(self, result: Any) -> str:
+        """Format tool result for display."""
+        if hasattr(result, 'content'):
+            content = result.content
+            if isinstance(content, list):
+                texts = []
+                for block in content:
+                    if hasattr(block, 'text'):
+                        texts.append(block.text)
+                    elif isinstance(block, dict) and 'text' in block:
+                        texts.append(block['text'])
+                return '\n'.join(texts)
+            return str(content)
+        return str(result)
+    
+    async def _add_tool_result_to_memory(self, tool_call: Dict, result: Any):
+        """Add tool result to agent's memory."""
+        from agentscope.message import Msg, ToolResultBlock
+        
+        tool_name = tool_call.get('name') or tool_call.get('function', {}).get('name', 'unknown')
+        tool_id = tool_call.get('id', 'unknown')
+        
+        # Format result as string
+        result_str = self._format_tool_result(result)
+        
+        # Create tool result message
+        result_msg = Msg(
+            name="system",
+            content=[
+                ToolResultBlock(
+                    type="tool_result",
+                    id=tool_id,
+                    name=tool_name,
+                    output=result_str,
+                )
+            ],
+            role="system"
+        )
+        
+        await self.memory.add(result_msg)
     
     def _extract_tool_call_from_chunk(self, chunk) -> Optional[Dict]:
         """Extract tool call information from a streaming chunk.
