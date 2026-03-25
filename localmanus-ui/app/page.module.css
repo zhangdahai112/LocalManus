@@ -23,12 +23,17 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 60px 40px; /* More generous padding */
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: margin-left 0.3s ease, all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   scroll-behavior: smooth;
   position: relative;
   /* Smooth fade at the top */
   mask-image: linear-gradient(to bottom, transparent 0%, black 80px, black 100%);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 80px, black 100%);
+}
+
+/* When sidebar is collapsed - use a data attribute on main element */
+.main:has(> aside[class*="collapsed"]) .content {
+  margin-left: 72px;
 }
 
 .chatMode .content {
@@ -72,8 +77,13 @@
     rgba(252, 252, 252, 0) 100%
   );
   z-index: 50;
-  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: left 0.3s ease, right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
+}
+
+/* When sidebar is collapsed */
+.main:has(> aside[class*="collapsed"]) .fixedOmnibox {
+  left: 72px;
 }
 
 /* When VNC panel is collapsed or in home mode, omnibox takes full width */

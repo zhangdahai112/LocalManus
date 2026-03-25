@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Omnibox from './components/Omnibox';
 import Toolbox from './components/Toolbox';
-import UserStatus from './components/UserStatus';
 import MarkdownRenderer from './components/MarkdownRenderer';
 import VNCPreview from './components/VNCPreview';
 import { getApiBaseUrl } from './utils/api';
@@ -173,11 +172,9 @@ export default function Home() {
 
   return (
     <main className={`${styles.main} ${isChatMode ? styles.chatMode : ''}`}>
-      <Sidebar onNewChat={handleNewChat} />
+      <Sidebar onNewChat={handleNewChat} isChatMode={isChatMode} />
 
-      <div className={styles.topRightActions}>
-        <UserStatus />
-      </div>
+      {/* UserStatus moved to Sidebar */}
 
       {/* VNC Preview Panel - only visible in chat mode */}
       <VNCPreview isChatMode={isChatMode} />

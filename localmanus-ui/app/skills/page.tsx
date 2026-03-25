@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import { Search, Settings, CheckCircle, Circle, Info, ChevronRight } from 'lucide-react';
 import * as Icons from 'lucide-react';
 import Sidebar from '../components/Sidebar';
-import UserStatus from '../components/UserStatus';
 import { getApiBaseUrl } from '../utils/api';
 import styles from './skills.module.css';
 
@@ -105,9 +104,7 @@ export default function SkillsPage() {
     <main style={{ display: 'flex', backgroundColor: '#fcfcfc', minHeight: '100vh' }}>
       <Sidebar onNewChat={handleNewChat} />
       
-      <div style={{ position: 'fixed', top: '12px', right: '12px', zIndex: 1000 }}>
-        <UserStatus />
-      </div>
+      {/* UserStatus moved to Sidebar */}
 
       <div className={styles.container}>
         <header className={styles.header}>
