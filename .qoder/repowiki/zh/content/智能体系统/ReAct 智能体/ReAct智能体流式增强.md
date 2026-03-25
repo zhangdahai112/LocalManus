@@ -17,11 +17,10 @@
 
 ## 更新摘要
 **变更内容**
-- 更新了ReAct智能体从AgentScope原生流式支持到手动实现的架构变更
-- 新增了THINK-ACT-OBSERVE三阶段流式处理机制的详细说明
-- 增强了内存压缩和工具执行能力的技术细节
-- 改进了思维内容流式传输和错误处理机制
-- 更新了流式处理架构图和组件关系图
+- 更新了ReAct智能体的最大迭代次数从1增加到10，支持更复杂的多轮对话
+- 新增了智能令牌计数机制和内存压缩功能，提升长对话处理能力
+- 增强了工具执行能力和思维内容流式传输的稳定性
+- 改进了错误处理和资源清理机制，确保系统的可靠性
 
 ## 目录
 1. [简介](#简介)
@@ -38,13 +37,13 @@
 
 LocalManus是一个基于AgentScope框架的多智能体AI平台，专注于ReAct（推理与行动）智能体的流式增强实现。该项目通过Server-Sent Events (SSE)技术实现了真正的实时流式响应，为用户提供了流畅的交互体验。
 
-**更新** 项目已从简单的AgentScope原生流式支持升级为完全自定义的手动ReAct循环实现，实现了更精细的流式控制和增强的功能特性。
+**更新** 项目已从简单的AgentScope原生流式支持升级为完全自定义的手动ReAct循环实现，实现了更精细的流式控制和增强的功能特性。最新的版本将最大迭代次数从1增加到10，显著提升了复杂任务的处理能力。
 
 该项目的核心创新在于：
-- **手动ReAct循环实现**：完全自定义的THINK-ACT-OBSERVE三阶段流式处理
+- **手动ReAct循环实现**：完全自定义的THINK-ACT-OBSERVE三阶段流式处理，支持最多10轮迭代
+- **智能令牌计数与内存压缩**：基于字符估算的令牌计数机制和自动内存压缩功能
 - **思维内容实时传输**：通过全局回调机制实现实时思维内容流式传输
 - **增强的工具执行能力**：支持工具调用的实时反馈和结果格式化
-- **智能内存压缩**：基于令牌计数的自动记忆压缩机制
 - **改进的错误处理**：完善的异常捕获和资源清理机制
 
 ## 项目结构
@@ -96,9 +95,9 @@ ReAct --> Sandbox
 
 ### ReAct智能体系统
 
-**更新** ReAct智能体已从AgentScope原生实现升级为完全自定义的手动实现，提供了更精细的流式控制和增强的功能特性。
+**更新** ReAct智能体已从AgentScope原生实现升级为完全自定义的手动实现，支持最多10轮迭代，提供了更精细的流式控制和增强的功能特性。
 
-ReAct智能体是整个系统的核心，负责推理和行动的协调执行。它基于AgentScope框架，实现了完整的手动ReAct循环：
+ReAct智能体是整个系统的核心，负责推理和行动的协调执行。它基于AgentScope框架，实现了完整的手动ReAct循环，现在支持最多10轮迭代：
 
 ```mermaid
 classDiagram
@@ -112,6 +111,7 @@ class ReActAgent {
 +_execute_tool(tool_call) Any
 +_add_tool_result_to_memory(tool_call, result) void
 +run_with_context(user_input, user_context) AsyncGenerator
++MAX_ITERATIONS : 10
 }
 class UserContextToolkit {
 +call_tool_function(tool_block) AsyncGenerator
@@ -130,22 +130,27 @@ class Orchestrator {
 +chat_stream(session_id, user_input) AsyncGenerator
 +run_workflow(user_input) Dict
 }
+class SimpleTokenCounter {
++chars_per_token : int
++count(messages) int
+}
 ReActAgent --> UserContextToolkit : "使用"
 UserContextToolkit --> SkillManager : "依赖"
 Orchestrator --> ReActAgent : "协调"
 Orchestrator --> SkillManager : "管理"
+ReActAgent --> SimpleTokenCounter : "使用"
 ```
 
 **图表来源**
-- [react_agent.py:133-842](file://localmanus-backend/agents/react_agent.py#L133-L842)
+- [react_agent.py:133-855](file://localmanus-backend/agents/react_agent.py#L133-L855)
 - [skill_manager.py:98-236](file://localmanus-backend/core/skill_manager.py#L98-L236)
 - [orchestrator.py:12-216](file://localmanus-backend/core/orchestrator.py#L12-L216)
 
 ### 流式处理架构
 
-**更新** 新增了THINK-ACT-OBSERVE三阶段流式处理机制，实现了更精细的流式控制和实时反馈。
+**更新** 新增了THINK-ACT-OBSERVE三阶段流式处理机制，实现了更精细的流式控制和实时反馈，支持最多10轮迭代。
 
-系统采用异步流式处理架构，确保实时响应，并实现了完整的三阶段流式处理：
+系统采用异步流式处理架构，确保实时响应，并实现了完整的三阶段流式处理，现在支持最多10轮迭代：
 
 ```mermaid
 sequenceDiagram
@@ -158,7 +163,7 @@ participant Sandbox as 沙箱环境
 Client->>API : SSE请求
 API->>Orchestrator : chat_stream()
 Orchestrator->>ReAct : run_stream()
-loop 流式响应
+loop 最多10轮迭代
 ReAct->>ReAct : THINK阶段 - 推理思考
 ReAct->>Client : 思维内容流
 ReAct->>Skill : ACT阶段 - 工具调用
@@ -180,17 +185,17 @@ ReAct->>Client : [DONE]
 - [react_agent.py:250-365](file://localmanus-backend/agents/react_agent.py#L250-L365)
 
 **章节来源**
-- [react_agent.py:1-842](file://localmanus-backend/agents/react_agent.py#L1-L842)
+- [react_agent.py:1-855](file://localmanus-backend/agents/react_agent.py#L1-L855)
 - [orchestrator.py:1-216](file://localmanus-backend/core/orchestrator.py#L1-L216)
-- [skill_manager.py:1-236](file://localmanus-backend/core/skill_manager.py#L1-L236)
+- [skill_manager.py:1-259](file://localmanus-backend/core/skill_manager.py#L1-L259)
 
 ## 架构概览
 
 ### 整体系统架构
 
-**更新** 系统架构已从单一的AgentScope原生实现演进为多层协作架构，包含手动ReAct循环和智能思维内容流式传输。
+**更新** 系统架构已从单一的AgentScope原生实现演进为多层协作架构，包含手动ReAct循环、智能令牌计数和内存压缩功能。
 
-LocalManus采用分层架构设计，每层都有明确的职责分工：
+LocalManus采用分层架构设计，每层都有明确的职责分工，现在集成了智能令牌计数和内存压缩功能：
 
 ```mermaid
 graph TB
@@ -219,6 +224,10 @@ Sandbox[沙箱容器]
 Database[(SQLModel数据库)]
 Storage[(文件存储)]
 end
+subgraph "内存管理层"
+TokenCounter[简单令牌计数器]
+MemoryCompression[内存压缩]
+end
 Frontend --> FastAPI
 UI_Components --> FastAPI
 FastAPI --> Auth
@@ -231,6 +240,8 @@ Orchestrator --> ReAct
 ReAct --> SkillManager
 SkillManager --> UserContextToolkit
 SkillManager --> SkillRegistry
+ReAct --> TokenCounter
+TokenCounter --> MemoryCompression
 Manager --> Database
 Planner --> Database
 ReAct --> Sandbox
@@ -245,9 +256,9 @@ FastAPI --> Storage
 
 ### 数据流架构
 
-**更新** 新增了思维内容流式传输和工具执行结果的详细数据流处理。
+**更新** 新增了思维内容流式传输和工具执行结果的详细数据流处理，集成了智能令牌计数和内存压缩功能。
 
-系统内部的数据流遵循严格的协议规范，包含思维内容的实时传输：
+系统内部的数据流遵循严格的协议规范，包含思维内容的实时传输和智能内存管理：
 
 ```mermaid
 flowchart TD
@@ -258,7 +269,7 @@ CheckLimit --> |正常| AppendMessage["添加用户消息"]
 AppendMessage --> SetupCallback["设置思维回调"]
 SetupCallback --> BuildPrompt["构建系统提示词"]
 BuildPrompt --> CombineMessages["组合消息列表"]
-CombineMessages --> StreamLoop["流式循环处理"]
+CombineMessages --> StreamLoop["流式循环处理(最多10轮)"]
 StreamLoop --> CollectThinking["收集思维内容"]
 CollectThinking --> CheckChunk{"检查内容块"}
 CheckChunk --> |同步事件| SyncHistory["同步历史记录"]
@@ -286,9 +297,9 @@ ReturnError --> End
 
 ### ReAct智能体实现
 
-**更新** ReAct智能体已完全重写，实现了手动的THINK-ACT-OBSERVE三阶段流式处理循环。
+**更新** ReAct智能体已完全重写，实现了手动的THINK-ACT-OBSERVE三阶段流式处理循环，支持最多10轮迭代，并集成了智能令牌计数和内存压缩功能。
 
-ReAct智能体是系统的核心组件，实现了完整的推理-行动循环，包含三个阶段的流式处理：
+ReAct智能体是系统的核心组件，实现了完整的推理-行动循环，包含三个阶段的流式处理，现在支持最多10轮迭代：
 
 #### 核心方法分析
 
@@ -302,6 +313,7 @@ class ReActAgent {
 +execute_tool(tool_call) str
 +_reasoning(tool_choice) Msg
 +run_with_context(user_input, user_context) AsyncGenerator
++MAX_ITERATIONS : 10
 }
 class UserContextToolkit {
 +call_tool_function(tool_block) AsyncGenerator~ToolResponse~
@@ -314,36 +326,41 @@ class SkillManager {
 +clear_user_context() void
 +execute_tool(tool_name, kwargs) Any
 }
+class SimpleTokenCounter {
++chars_per_token : int
++count(messages) int
+}
 ReActAgent --> UserContextToolkit : "使用"
 UserContextToolkit --> SkillManager : "依赖"
 ```
 
 **图表来源**
-- [react_agent.py:133-842](file://localmanus-backend/agents/react_agent.py#L133-L842)
+- [react_agent.py:133-855](file://localmanus-backend/agents/react_agent.py#L133-L855)
 - [skill_manager.py:17-88](file://localmanus-backend/core/skill_manager.py#L17-L88)
 
 #### 流式处理机制
 
-**更新** 新增了THINK-ACT-OBSERVE三阶段流式处理机制，每个阶段都有特定的流式输出：
+**更新** 新增了THINK-ACT-OBSERVE三阶段流式处理机制，每个阶段都有特定的流式输出，支持最多10轮迭代：
 
 1. **THINK阶段**：实时流式传输推理思考内容
 2. **ACT阶段**：工具调用的实时反馈和执行状态
 3. **OBSERVE阶段**：工具结果的观察和下一轮循环
 
-ReAct智能体采用异步生成器模式实现流式处理：
+ReAct智能体采用异步生成器模式实现流式处理，现在支持最多10轮迭代：
 
 1. **消息转换**：将字典格式的消息转换为Msg对象
 2. **响应生成**：调用父类ReActAgent的回复方法
 3. **内容提取**：从响应中提取文本内容
 4. **分块传输**：将长内容分割为小块进行传输
 5. **工具调用检测**：实时检测并报告工具调用
+6. **迭代控制**：最多10轮迭代，确保复杂任务的完成
 
 **章节来源**
 - [react_agent.py:250-365](file://localmanus-backend/agents/react_agent.py#L250-L365)
 
 ### 协调器系统
 
-**更新** 协调器系统已增强了思维内容收集和工具执行结果的并发处理能力。
+**更新** 协调器系统已增强了思维内容收集和工具执行结果的并发处理能力，支持最多10轮迭代。
 
 协调器负责管理多个智能体之间的协作和会话状态，实现了复杂的思维内容收集机制：
 
@@ -357,7 +374,7 @@ MessageHistory --> LimitCheck{"检查限制"}
 LimitCheck --> |未超限| ProcessMessage["处理新消息"]
 LimitCheck --> |超限| ReturnError["返回错误"]
 ProcessMessage --> UpdateHistory["更新历史"]
-UpdateHistory --> StreamResponse["流式响应"]
+UpdateHistory --> StreamResponse["流式响应(最多10轮)"]
 StreamResponse --> Cleanup["清理资源"]
 ```
 
@@ -366,7 +383,7 @@ StreamResponse --> Cleanup["清理资源"]
 
 #### 思维内容收集
 
-**更新** 新增了专门的思维内容收集机制，支持实时思维内容的流式传输：
+**更新** 新增了专门的思维内容收集机制，支持实时思维内容的流式传输，现在支持最多10轮迭代：
 
 协调器实现了复杂的思维内容收集机制：
 
@@ -375,13 +392,14 @@ StreamResponse --> Cleanup["清理资源"]
 3. **缓冲区管理**：使用锁机制保护共享缓冲区
 4. **超时处理**：防止无限等待
 5. **实时传输**：通过全局回调机制实现实时思维内容流式传输
+6. **迭代控制**：配合ReAct智能体的10轮迭代限制
 
 **章节来源**
 - [orchestrator.py:45-162](file://localmanus-backend/core/orchestrator.py#L45-L162)
 
 ### 技能管理系统
 
-**更新** 技能管理系统已增强了用户上下文注入和工具执行的异步处理能力。
+**更新** 技能管理系统已增强了用户上下文注入和工具执行的异步处理能力，集成了智能令牌计数功能。
 
 技能管理系统提供了灵活的工具注册和执行机制，支持用户上下文的异步安全注入：
 
@@ -407,20 +425,21 @@ SkillManager->>Client : 返回工具结果
 
 #### 动态技能加载
 
-**更新** 新增了ContextVar机制确保异步安全的用户上下文隔离：
+**更新** 新增了ContextVar机制确保异步安全的用户上下文隔离，集成了智能令牌计数功能：
 
 系统支持动态技能加载，包括：
 - **Agent技能**：目录形式的复杂技能
 - **工具函数**：单个Python函数
 - **自动注册**：启动时自动扫描和注册
 - **异步安全**：使用ContextVar确保并发请求的上下文隔离
+- **令牌计数**：集成SimpleTokenCounter进行智能内存管理
 
 **章节来源**
 - [skill_manager.py:109-169](file://localmanus-backend/core/skill_manager.py#L109-L169)
 
 ### API接口设计
 
-**更新** API接口设计已增强了思维内容流式传输和工具执行结果的处理能力。
+**更新** API接口设计已增强了思维内容流式传输和工具执行结果的处理能力，支持最多10轮迭代。
 
 系统提供了丰富的REST API接口，支持完整的流式处理：
 
@@ -436,7 +455,7 @@ Client->>API : GET /api/chat?input=...
 API->>API : 设置SSE响应头
 API->>Orchestrator : chat_stream()
 Orchestrator->>ReAct : run_stream()
-loop 流式响应
+loop 最多10轮迭代
 ReAct->>API : data : {"content" : "..."}
 API->>Client : 推送内容块
 ReAct->>API : data : {"thinking" : "..."}
@@ -455,11 +474,51 @@ API->>Client : data : [DONE]
 **章节来源**
 - [main.py:444-477](file://localmanus-backend/main.py#L444-L477)
 
+### 智能令牌计数与内存压缩
+
+**更新** 新增了智能令牌计数和内存压缩功能，显著提升了长对话处理能力。
+
+系统集成了智能令牌计数和内存压缩机制：
+
+#### 令牌计数器
+
+```mermaid
+classDiagram
+class SimpleTokenCounter {
++chars_per_token : int = 4
++count(messages) int
+}
+class CompressionSummarySchema {
++task_overview : str
++current_state : str
++important_discoveries : str
++next_steps : str
++context_to_preserve : str
+}
+SimpleTokenCounter --> CompressionSummarySchema : "用于内存压缩"
+```
+
+**图表来源**
+- [react_agent.py:88-133](file://localmanus-backend/agents/react_agent.py#L88-L133)
+
+#### 内存压缩机制
+
+系统实现了智能内存压缩功能：
+
+1. **令牌计数**：使用字符估算方法计算消息的令牌数量
+2. **阈值检查**：当令牌数量超过10000时触发压缩
+3. **摘要生成**：创建结构化的压缩摘要
+4. **历史替换**：用压缩摘要替换早期对话历史
+5. **保留策略**：保留最近3条消息不被压缩
+
+**章节来源**
+- [react_agent.py:144-173](file://localmanus-backend/agents/react_agent.py#L144-L173)
+
 ## 依赖关系分析
 
 ### 外部依赖
 
-**更新** 外部依赖关系已更新，反映了新的手动ReAct实现架构。
+**更新** 外部依赖关系已更新，反映了新的手动ReAct实现架构和智能令牌计数功能。
 
 系统依赖于多个关键的外部库：
 
@@ -470,7 +529,8 @@ AgentScope[AgentScope核心]
 ReActAgent[ReActAgent]
 Toolkit[Toolkit]
 Msg[消息系统]
-end
+TokenCounter[令牌计数器]
+End
 subgraph "Web框架"
 FastAPI[FastAPI]
 Uvicorn[Uvicorn服务器]
@@ -488,15 +548,20 @@ Playwright[Playwright]
 BeautifulSoup[BeautifulSoup]
 Requests[Requests]
 end
+subgraph "内存管理"
+ContextVar[ContextVar]
+end
 AgentScope --> ReActAgent
 AgentScope --> Toolkit
 AgentScope --> Msg
+AgentScope --> TokenCounter
 FastAPI --> AgentScope
 FastAPI --> SQLModel
 FastAPI --> AsyncIO
 ReActAgent --> Playwright
 Toolkit --> BeautifulSoup
 Toolkit --> Requests
+TokenCounter --> ContextVar
 ```
 
 **图表来源**
@@ -505,7 +570,7 @@ Toolkit --> Requests
 
 ### 内部模块依赖
 
-**更新** 内部模块依赖关系已反映新的手动实现架构。
+**更新** 内部模块依赖关系已反映新的手动实现架构和智能令牌计数功能。
 
 ```mermaid
 graph TD
@@ -514,6 +579,7 @@ Main --> AgentManager[core/agent_manager.py]
 Orchestrator --> ReactAgent[agents/react_agent.py]
 Orchestrator --> SkillManager[core/skill_manager.py]
 ReactAgent --> Prompts[core/prompts.py]
+ReactAgent --> SimpleTokenCounter[agents/react_agent.py]
 AgentManager --> BaseAgents[agents/base_agents.py]
 AgentManager --> SkillManager
 SkillManager --> UserContextToolkit[core/skill_manager.py]
@@ -525,13 +591,13 @@ SkillManager --> UserContextToolkit[core/skill_manager.py]
 
 **章节来源**
 - [main.py:1-26](file://localmanus-backend/main.py#L1-L26)
-- [agent_manager.py:1-52](file://localmanus-backend/core/agent_manager.py#L1-L52)
+- [agent_manager.py:1-65](file://localmanus-backend/core/agent_manager.py#L1-L65)
 
 ## 性能考虑
 
 ### 流式处理优化
 
-**更新** 性能优化已增强，包含了新的内存压缩和思维内容流式传输机制。
+**更新** 性能优化已增强，包含了新的内存压缩和思维内容流式传输机制，支持最多10轮迭代。
 
 系统在性能方面采用了多项优化策略：
 
@@ -539,8 +605,10 @@ SkillManager --> UserContextToolkit[core/skill_manager.py]
 2. **内存管理**：及时清理异步任务和队列资源
 3. **内容分块**：将长内容分割为小块传输，减少内存占用
 4. **并发控制**：合理控制并发任务数量，避免资源争用
-5. **智能压缩**：基于令牌计数的自动记忆压缩机制
+5. **智能压缩**：基于令牌计数的自动记忆压缩机制，阈值为10000令牌
 6. **思维内容缓存**：实时思维内容的高效缓存和传输
+7. **迭代限制**：最多10轮迭代，平衡性能和功能
+8. **令牌计数优化**：字符估算方法快速计算令牌数量
 
 ### 缓存策略
 
@@ -552,7 +620,10 @@ Request[请求到达] --> CheckCache{"检查缓存"}
 CheckCache --> |命中| ReturnCache["返回缓存内容"]
 CheckCache --> |未命中| ProcessRequest["处理请求"]
 ProcessRequest --> GenerateContent["生成内容"]
-GenerateContent --> CacheContent["缓存内容"]
+GenerateContent --> CheckTokens{"检查令牌计数"}
+CheckTokens --> |超过10000| CompressMemory["压缩内存"]
+CheckTokens --> |正常| CacheContent["缓存内容"]
+CompressMemory --> CacheContent
 CacheContent --> ReturnContent["返回内容"]
 ReturnCache --> End([结束])
 ReturnContent --> End
@@ -560,7 +631,7 @@ ReturnContent --> End
 
 ### 错误处理机制
 
-**更新** 错误处理机制已增强，包含了思维内容流式传输和工具执行的完整异常处理。
+**更新** 错误处理机制已增强，包含了思维内容流式传输、工具执行和内存压缩的完整异常处理。
 
 系统实现了完善的错误处理机制：
 
@@ -570,12 +641,14 @@ ReturnContent --> End
 4. **日志记录**：详细记录错误信息便于调试
 5. **思维内容恢复**：确保思维内容流式传输的完整性
 6. **工具执行回滚**：工具执行失败时的自动回滚机制
+7. **内存压缩回退**：令牌计数失败时的降级处理
+8. **迭代超时保护**：防止无限循环的迭代控制
 
 ## 故障排除指南
 
 ### 常见问题诊断
 
-**更新** 故障排除指南已更新，包含了新的思维内容流式传输和工具执行相关的诊断方法。
+**更新** 故障排除指南已更新，包含了新的思维内容流式传输、工具执行和内存压缩相关的诊断方法。
 
 #### SSE连接问题
 
@@ -603,6 +676,8 @@ ReturnContent --> End
 3. 网络延迟
 4. 并发任务过多
 5. 思维内容流式传输阻塞
+6. 内存压缩处理开销
+7. 令牌计数计算耗时
 
 **解决方案**：
 1. 优化模型配置和参数
@@ -610,6 +685,8 @@ ReturnContent --> End
 3. 检查网络连接质量
 4. 调整并发限制
 5. 优化思维内容流式传输性能
+6. 调整内存压缩阈值
+7. 优化令牌计数算法
 
 #### 思维内容传输问题
 
@@ -622,12 +699,14 @@ ReturnContent --> End
 2. 思维内容队列阻塞
 3. 异步任务取消
 4. 缓冲区锁定问题
+5. ContextVar上下文丢失
 
 **解决方案**：
 1. 检查set_thinking_callback函数调用
 2. 验证思维内容队列的异步处理
 3. 确保异步任务的正确生命周期管理
 4. 检查缓冲区锁的获取和释放
+5. 验证ContextVar的异步安全性
 
 #### 技能执行失败
 
@@ -639,6 +718,7 @@ ReturnContent --> End
 3. 权限不足
 4. 外部服务不可用
 5. 异步执行超时
+6. 令牌计数异常
 
 **解决方案**：
 1. 检查技能注册日志
@@ -646,13 +726,34 @@ ReturnContent --> End
 3. 确认权限配置
 4. 检查外部服务状态
 5. 实现工具执行的超时和重试机制
+6. 检查令牌计数器的字符估算准确性
+
+#### 内存压缩问题
+
+**更新** 新增了专门的内存压缩问题诊断：
+
+**症状**：内存压缩功能异常
+
+**可能原因**：
+1. 令牌计数器配置错误
+2. 压缩阈值设置不当
+3. 摘要生成失败
+4. 历史消息格式不兼容
+5. ContextVar上下文丢失
+
+**解决方案**：
+1. 检查DEFAULT_COMPRESSION_THRESHOLD配置
+2. 验证保留消息数量设置
+3. 检查CompressionSummarySchema的字段完整性
+4. 确认历史消息的Msg对象格式
+5. 验证ContextVar的异步安全性
 
 **章节来源**
 - [test_chat_sse.py:30-115](file://localmanus-backend/test_chat_sse.py#L30-L115)
 
 ### 调试工具
 
-**更新** 调试工具已增强，包含了新的思维内容流式传输和工具执行结果的调试功能。
+**更新** 调试工具已增强，包含了新的思维内容流式传输、工具执行和内存压缩的调试功能。
 
 系统提供了多种调试工具：
 
@@ -667,14 +768,18 @@ TestSuite --> SystemExec[系统执行测试]
 TestSuite --> MultiTurn[多轮对话测试]
 TestSuite --> ThinkingStream[思维内容流式测试]
 TestSuite --> ToolExecution[工具执行测试]
+TestSuite --> MemoryCompression[内存压缩测试]
+TestSuite --> TokenCounter[令牌计数测试]
 WebSearch --> Bing[Bing搜索]
 WebSearch --> Google[Google搜索]
 WebSearch --> DuckDuckGo[DuckDuckGo搜索]
 WebSearch --> Baidu[Baidu搜索]
-MultiTurn --> LongConversation[长对话测试]
+MultiTurn --> LongConversation[长对话测试(最多10轮)]
 MultiTurn --> ErrorHandling[错误处理测试]
 ThinkingStream --> RealtimeThinking[实时思维传输]
 ToolExecution --> ToolResult[工具结果格式化]
+MemoryCompression --> CompressionThreshold[压缩阈值测试]
+TokenCounter --> CharacterEstimation[字符估算测试]
 ```
 
 **图表来源**
@@ -682,7 +787,7 @@ ToolExecution --> ToolResult[工具结果格式化]
 
 #### 日志分析
 
-**更新** 日志分析已增强，包含了新的思维内容流式传输和内存压缩的日志记录。
+**更新** 日志分析已增强，包含了新的思维内容流式传输、工具执行和内存压缩的日志记录。
 
 系统使用结构化日志记录所有关键操作：
 
@@ -691,33 +796,37 @@ ToolExecution --> ToolResult[工具结果格式化]
 3. **思维内容日志**：记录实时思维内容传输状态
 4. **技能日志**：记录工具调用的执行情况
 5. **内存压缩日志**：记录智能内存压缩的触发和效果
-6. **错误日志**：捕获和记录所有异常情况
+6. **令牌计数日志**：记录令牌计数的计算过程
+7. **错误日志**：捕获和记录所有异常情况
+8. **迭代控制日志**：记录10轮迭代的执行状态
 
 **章节来源**
 - [test_chat_sse.py:1-509](file://localmanus-backend/test_chat_sse.py#L1-L509)
 
 ## 结论
 
-**更新** 结论部分已更新，反映了从AgentScope原生流式支持到手动实现的重大架构变更。
+**更新** 结论部分已更新，反映了从AgentScope原生流式支持到手动实现的重大架构变更，以及新增的智能令牌计数和内存压缩功能。
 
 LocalManus的ReAct智能体流式增强项目展示了现代AI应用的最佳实践。通过精心设计的架构和实现，系统成功地解决了传统AI应用中的延迟和用户体验问题。
 
 ### 主要成就
 
-1. **手动ReAct循环实现**：完全自定义的THINK-ACT-OBSERVE三阶段流式处理
-2. **实时思维内容传输**：通过全局回调机制实现思维内容的实时流式传输
-3. **智能内存压缩**：基于令牌计数的自动记忆压缩机制
+1. **手动ReAct循环实现**：完全自定义的THINK-ACT-OBSERVE三阶段流式处理，支持最多10轮迭代
+2. **智能令牌计数与内存压缩**：基于字符估算的令牌计数机制和自动内存压缩功能
+3. **实时思维内容传输**：通过全局回调机制实现思维内容的实时流式传输
 4. **增强的工具执行能力**：支持工具调用的实时反馈和结果格式化
 5. **异步安全的用户上下文**：使用ContextVar确保并发请求的上下文隔离
+6. **完善的错误处理机制**：覆盖思维内容传输、工具执行和内存压缩的完整异常处理
 
 ### 技术亮点
 
-- **手动流式控制**：完全自定义的流式处理循环，提供精确的控制
+- **手动流式控制**：完全自定义的流式处理循环，提供精确的控制，支持最多10轮迭代
 - **三阶段流式处理**：THINK-ACT-OBSERVE三个阶段的精细化流式控制
+- **智能内存管理**：基于令牌计数的自动记忆压缩机制，阈值为10000令牌
 - **思维内容可视化**：实时展示AI的思考过程，提升用户体验
-- **智能内存管理**：自动内存压缩和优化，提高系统性能
 - **异步安全机制**：ContextVar确保并发环境下的数据隔离
-- **完整的错误处理**：覆盖思维内容传输和工具执行的完整异常处理
+- **令牌计数优化**：字符估算方法快速计算令牌数量，提升性能
+- **完整的错误处理**：覆盖所有关键环节的异常处理和资源清理
 
 ### 未来发展
 
@@ -725,11 +834,13 @@ LocalManus的ReAct智能体流式增强项目展示了现代AI应用的最佳实
 
 该项目为AI应用的流式增强提供了优秀的参考模型，未来可以在以下方面进一步发展：
 
-1. **性能优化**：进一步优化手动ReAct循环的性能和思维内容传输效率
-2. **功能扩展**：增加更多类型的智能体和技能，支持更复杂的任务场景
-3. **用户体验**：改进前端界面和交互设计，提供更好的可视化反馈
-4. **部署优化**：简化部署流程和配置管理，支持更灵活的部署方式
-5. **智能压缩算法**：开发更先进的内存压缩算法，提高压缩效率
-6. **思维内容分析**：实现思维内容的深度分析和学习，提升智能体能力
+1. **性能优化**：进一步优化手动ReAct循环的性能和思维内容传输效率，支持更多轮次迭代
+2. **智能压缩算法**：开发更先进的内存压缩算法，提高压缩效率和质量
+3. **令牌计数精度**：实现更准确的令牌计数算法，如使用tiktoken等专业工具
+4. **功能扩展**：增加更多类型的智能体和技能，支持更复杂的任务场景
+5. **用户体验**：改进前端界面和交互设计，提供更好的可视化反馈
+6. **部署优化**：简化部署流程和配置管理，支持更灵活的部署方式
+7. **智能分析**：实现思维内容的深度分析和学习，提升智能体能力
+8. **资源管理**：优化内存和计算资源的使用，支持更大规模的应用场景
 
 通过持续的改进和优化，LocalManus将成为一个功能完整、性能优异的AI智能体平台，为用户提供更加流畅和智能的交互体验。

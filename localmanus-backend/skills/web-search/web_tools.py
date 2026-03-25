@@ -371,7 +371,7 @@ class WebSearchSkill(BaseSkill):
                 # Take screenshot
                 png = await page.screenshot(full_page=False)
             finally:
-                await page.close()
+                logger.info("Closing page")
             
             b64 = base64.b64encode(png).decode()
             msg = f"Screenshot captured ({len(png)} bytes, base64 truncated): {b64[:200]}..."
@@ -494,8 +494,6 @@ class WebSearchSkill(BaseSkill):
                 results = _parse_baidu_results(html)
             else:
                 results = _parse_bing_results(html)
-        finally:
-            await page.close()
 
         return results[:max_results]
 
@@ -520,8 +518,7 @@ class WebSearchSkill(BaseSkill):
                 }
             """)
         finally:
-            await page.close()
-        
+            logger.info("Closing page")
         return _clean_text(raw)
 
 
