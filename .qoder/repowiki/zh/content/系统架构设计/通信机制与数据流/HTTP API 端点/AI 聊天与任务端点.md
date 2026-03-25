@@ -560,7 +560,7 @@ LocalManus 的聊天与任务端点通过 FastAPI 与 AgentScope 生态实现，
 ### 沙箱配置与部署
 - 沙箱模式配置
   - SANDBOX_MODE: local 或 online
-  - SANDBOX_LOCAL_URL: 本地沙箱地址（默认：http://192.168.126.133:8080）
+  - SANDBOX_LOCAL_URL: 本地沙箱地址（默认：http://192.168.126.132:8080）
   - USE_CHINA_MIRROR: 是否使用中国镜像
 - 部署注意事项
   - 本地模式：确保本地沙箱服务正常运行

@@ -668,7 +668,7 @@ UVICORN --> FASTAPI
 | OPENAI_API_BASE | http://localhost:11434/v1 | API基础URL |
 | MODEL_NAME | gpt-4 | 模型名称 |
 | SANDBOX_MODE | local | 沙箱模式（local/online） |
-| SANDBOX_LOCAL_URL | http://192.168.126.133:8080 | 本地沙箱URL |
+| SANDBOX_LOCAL_URL | http://192.168.126.132:8080 | 本地沙箱URL |
 | USE_CHINA_MIRROR | false | 使用中国镜像 |
 
 **章节来源**

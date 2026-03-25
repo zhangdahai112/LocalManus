@@ -21,9 +21,10 @@ logger = logging.getLogger("LocalManus-ReActAgent")
 # Global callback for streaming thinking content
 _thinking_callback = None
 
+
 def set_thinking_callback(callback):
     """Set a callback function to receive thinking content stream.
-    
+
     Args:
         callback: A function that receives thinking content chunks
     """
@@ -37,7 +38,7 @@ def set_thinking_callback(callback):
 
 class CompressionSummarySchema(BaseModel):
     """Structured model for compressed memory summary."""
-    
+
     task_overview: str = Field(
         max_length=300,
         description=(
@@ -86,31 +87,32 @@ class CompressionSummarySchema(BaseModel):
 
 class SimpleTokenCounter(TokenCounterBase):
     """Simple token counter using character-based estimation.
-    
+
     Uses a rough estimate of ~4 characters per token for most languages.
     For more accurate counting, consider using tiktoken for OpenAI models.
     """
-    
+
     def __init__(self, chars_per_token: int = 4):
         self.chars_per_token = chars_per_token
-    
+
     async def count(self, messages) -> int:
         """Count tokens in messages.
-        
+
         Args:
             messages: Either a string or list of Msg objects
-            
+
         Returns:
             Estimated token count
         """
         if isinstance(messages, str):
             return len(messages) // self.chars_per_token
-        
+
         total_chars = 0
         if isinstance(messages, list):
             for msg in messages:
                 if isinstance(msg, Msg):
-                    content = msg.get_text_content() if hasattr(msg, 'get_text_content') else str(msg.content)
+                    content = msg.get_text_content() if hasattr(
+                        msg, 'get_text_content') else str(msg.content)
                     total_chars += len(content)
                 elif isinstance(msg, dict):
                     content = msg.get('content', '')
@@ -126,23 +128,23 @@ class SimpleTokenCounter(TokenCounterBase):
                     total_chars += len(str(msg))
         else:
             total_chars = len(str(messages))
-        
+
         return total_chars // self.chars_per_token
 
 
 class ReActAgent(ASReActAgent):
     """Standardized ReAct Agent following AgentScope patterns.
-    
+
     Features:
     - Memory compression when token count exceeds threshold
     - SSE streaming support
     - Tool execution via skill manager
     """
-    
+
     # Compression configuration constants
     DEFAULT_COMPRESSION_THRESHOLD = 10000  # tokens
     DEFAULT_KEEP_RECENT = 3  # messages to keep uncompressed
-    
+
     # Compression prompt template
     COMPRESSION_PROMPT = (
         "<system-hint>You have been working on the task described above "
@@ -153,7 +155,7 @@ class ReActAgent(ASReActAgent):
         "Your summary should be structured, concise, and actionable."
         "</system-hint>"
     )
-    
+
     # Summary template for compressed memory
     SUMMARY_TEMPLATE = (
         "<system-info>Here is a summary of your previous work\n"
@@ -169,20 +171,20 @@ class ReActAgent(ASReActAgent):
         "{context_to_preserve}"
         "</system-info>"
     )
-    
+
     def __init__(
-        self, 
-        model, 
-        formatter, 
+        self,
+        model,
+        formatter,
         skill_manager: SkillManager,
         enable_compression: bool = True,
         compression_threshold: int = None,
         keep_recent: int = None,
-        compression_model = None,
-        compression_formatter = None
+        compression_model=None,
+        compression_formatter=None
     ):
         """Initialize the ReAct agent with AgentScope native implementation.
-        
+
         Args:
             model: The LLM model to use
             formatter: Message formatter for the model
@@ -197,14 +199,14 @@ class ReActAgent(ASReActAgent):
         compression_config = None
         if enable_compression:
             from agentscope.agent._react_agent import ReActAgent as OfficialReActAgent
-            
+
             # Create token counter
             token_counter = SimpleTokenCounter(chars_per_token=4)
-            
+
             # Use provided values or defaults
             threshold = compression_threshold or self.DEFAULT_COMPRESSION_THRESHOLD
             keep = keep_recent or self.DEFAULT_KEEP_RECENT
-            
+
             compression_config = OfficialReActAgent.CompressionConfig(
                 enable=True,
                 agent_token_counter=token_counter,
@@ -216,8 +218,9 @@ class ReActAgent(ASReActAgent):
                 compression_model=compression_model,
                 compression_formatter=compression_formatter,
             )
-            logger.info(f"Memory compression enabled: threshold={threshold} tokens, keep_recent={keep}")
-        
+            logger.info(
+                f"Memory compression enabled: threshold={threshold} tokens, keep_recent={keep}")
+
         # Initialize parent ReActAgent with toolkit and compression config
         super().__init__(
             name="LocalManus-ReAct",
@@ -233,13 +236,15 @@ class ReActAgent(ASReActAgent):
     def _build_system_prompt(self, user_context: Optional[Dict] = None) -> str:
         """Build system prompt with current context and tools."""
         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user_info_str = json.dumps(user_context, ensure_ascii=False) if user_context else "Anonymous"
+        user_info_str = json.dumps(
+            user_context, ensure_ascii=False) if user_context else "Anonymous"
         skills_prompt = self.skill_manager.get_skills_prompt() or ""
-        
+
         # Get tools metadata from toolkit
         tools_schemas = self.skill_manager.toolkit.get_json_schemas()
-        tools_metadata = json.dumps(tools_schemas, indent=2, ensure_ascii=False)
-        
+        tools_metadata = json.dumps(
+            tools_schemas, indent=2, ensure_ascii=False)
+
         return REACT_AGENT_SYSTEM_PROMPT.format(
             current_time=current_time,
             user_info=user_info_str,
@@ -250,21 +255,22 @@ class ReActAgent(ASReActAgent):
     async def run_stream(self, messages: list):
         """
         Manual ReAct loop with streaming support.
-        
+
         Implements: Think → Act → Observe cycle
         - THINK: Stream reasoning content to frontend in real-time
         - ACT: Execute tool calls and notify frontend
         - OBSERVE: Feed tool results back to model
-        
+
         Repeats until task is complete or max iterations reached.
-        
+
         Yields:
             Dict[str, Any]: Content chunks with 'content' key, or internal events like '_sync'
         """
-        MAX_ITERATIONS = 1
+        MAX_ITERATIONS = 10
         iteration = 0
+        inner_iteration = 0
         new_messages = []
-        
+
         try:
             # Convert dict messages to Msg objects
             msg_objects = []
@@ -277,106 +283,111 @@ class ReActAgent(ASReActAgent):
                     ))
                 else:
                     msg_objects.append(m)
-            
+
             # Get the last user message
             last_msg = msg_objects[-1] if msg_objects else None
             if not last_msg:
                 yield {"content": "Error: No message to respond to."}
                 return
-            
+
             # Add to agent's memory
             await self.memory.add(last_msg)
-            
-            # === REACT LOOP ===
+
+            logger.info(f"=== ReAct Iteration {iteration} ===")
+
             while iteration < MAX_ITERATIONS:
                 iteration += 1
-                logger.info(f"=== ReAct Iteration {iteration} ===")
-                
                 # === STEP 1: THINK (Reasoning) ===
-                yield {"content": f"\n🧠 **[Thinking... (Iteration {iteration})]**\n\n"}
-                
+                if iteration == 1:
+                    yield {"content": f"\n🧠 **[Thinking... (Iteration {iteration})]**\n\n"}
+
                 # Stream reasoning from model
                 reasoning_msg = await self._stream_reasoning()
-                
+
                 # Check if we have tool calls
                 tool_calls = self._extract_tool_calls_from_msg(reasoning_msg)
-                
+
                 # Extract and yield text content
                 text_content = self._extract_content(reasoning_msg)
                 if text_content:
                     yield {"content": text_content}
-                
-                # === STEP 2: ACT (Tool Execution) ===
-                if not tool_calls:
-                    # No more tool calls - task complete
-                    logger.info("No tool calls - task complete")
+
+                if len(tool_calls) == 0:
                     break
-                
-                # Execute each tool call
-                for tc in tool_calls:
-                    tool_name = tc.get('function', {}).get('name', tc.get('name', 'unknown'))
+                # === REACT LOOP ===
+                inner_iteration = 0
+                while inner_iteration < len(tool_calls):
+
+                    # === STEP 2: ACT (Tool Execution) ===
+                    if not tool_calls:
+                        # No more tool calls - task complete
+                        logger.info("No tool calls - task complete")
+                        break
+
+                    tc = tool_calls[inner_iteration]
+                    inner_iteration += 1
+                    # Execute each tool call
+                    tool_name = tc.get('function', {}).get(
+                        'name', tc.get('name', 'unknown'))
                     tool_args = tc.get('function', {}).get('arguments', '{}')
-                    
+
                     # Notify frontend about tool call
                     yield {"content": f"\n\n🔧 **[Tool Call]** `{tool_name}`\n"}
                     if tool_args and tool_args != '{}':
                         try:
-                            args_display = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
+                            args_display = json.loads(tool_args) if isinstance(
+                                tool_args, str) else tool_args
                             yield {"content": f"```json\n{json.dumps(args_display, indent=2, ensure_ascii=False)}\n```\n"}
                         except:
                             pass
-                    
+
                     # Execute tool
                     yield {"content": "⏳ *Executing...*\n"}
-                    
+
                     try:
                         tool_result = await self._execute_tool(tc)
-                        
+
                         # Yield tool result
                         result_text = self._format_tool_result(tool_result)
                         yield {"content": f"✅ **[Result]**\n{result_text}\n"}
-                        
+
                         # Add tool result to memory for next iteration
                         await self._add_tool_result_to_memory(tc, tool_result)
-                        
                     except Exception as e:
                         error_msg = f"❌ **[Error]**: {str(e)}\n"
                         yield {"content": error_msg}
                         await self._add_tool_result_to_memory(tc, f"Error: {str(e)}")
-                
-                # === STEP 3: OBSERVE (Continue Loop) ===
-                # The tool results are now in memory, next iteration will use them
-                yield {"content": "\n---\n"}
-            
-            # Final summary if max iterations reached
-            if iteration >= MAX_ITERATIONS:
-                yield {"content": f"\n⚠️ **Reached maximum iterations ({MAX_ITERATIONS})**\n"}
-            
-            # Store for sync
-            new_messages.append({"role": "assistant", "content": text_content or ""})
-            
+
+                    # === STEP 3: OBSERVE (Continue Loop) ===
+                    # The tool results are now in memory, next iteration will use them
+                    yield {"content": "\n---\n"}
+
+                # Store for sync
+                new_messages.append(
+                    {"role": "assistant", "content": text_content or ""})
+
         except Exception as e:
             logger.error(f"Error in ReAct loop: {str(e)}", exc_info=True)
             yield {"content": f"\n\n❌ **[Error]**: {str(e)}\n"}
-        
+
         finally:
             if new_messages:
                 yield {"_sync": new_messages}
-    
+
     async def _stream_reasoning(self) -> Msg:
         """
         Stream reasoning from the model.
-        
+
         Returns the complete message after streaming.
         """
         from agentscope.agent._react_agent import _MemoryMark
-        
+
         # Handle plan notebook hints
         if self.plan_notebook:
             hint_msg = await self.plan_notebook.get_current_hint()
             if hint_msg:
                 await self.memory.add(hint_msg, marks=_MemoryMark.HINT)
-        
+
         # Format prompt with system prompt and memory
         prompt = await self.formatter.format(
             msgs=[
@@ -384,20 +395,20 @@ class ReActAgent(ASReActAgent):
                 *await self.memory.get_memory(),
             ],
         )
-        
+
         # Clear hint messages after use
         await self.memory.delete_by_mark(mark=_MemoryMark.HINT)
-        
+
         # Call model with tools
         res = await self.model(
             prompt,
             tools=self.toolkit.get_json_schemas(),
             tool_choice=None,
         )
-        
+
         # Process streaming response
         msg = Msg(name=self.name, content=[], role="assistant")
-        
+
         if self.model.stream:
             # Stream and accumulate content
             async for content_chunk in res:
@@ -405,23 +416,23 @@ class ReActAgent(ASReActAgent):
         else:
             # Non-streaming: just use the result
             msg.content = list(res.content) if hasattr(res, 'content') else res
-        
+
         # Add to memory
         await self.memory.add(msg)
-        
+
         return msg
-    
+
     def _extract_tool_calls_from_msg(self, msg: Msg) -> list:
         """Extract tool calls from a message object."""
         tool_calls = []
-        
+
         if not hasattr(msg, 'content'):
             return tool_calls
-        
+
         content = msg.content
         if not isinstance(content, list):
             return tool_calls
-        
+
         for block in content:
             # Object format
             if hasattr(block, 'type') and block.type == 'tool_use':
@@ -445,9 +456,9 @@ class ReActAgent(ASReActAgent):
                     }
                 }
                 tool_calls.append(tc)
-        
+
         return tool_calls
-    
+
     async def _execute_tool(self, tool_call: Dict) -> Any:
         """Execute a single tool call."""
         # Format for toolkit
@@ -456,14 +467,14 @@ class ReActAgent(ASReActAgent):
             'name': tool_call.get('name') or tool_call.get('function', {}).get('name', 'unknown'),
             'input': tool_call.get('input') or tool_call.get('function', {}).get('arguments', {})
         }
-        
+
         # Parse arguments if string
         if isinstance(tc_formatted['input'], str):
             try:
                 tc_formatted['input'] = json.loads(tc_formatted['input'])
             except:
                 tc_formatted['input'] = {}
-        
+
         # Execute via toolkit
         from agentscope.message import ToolUseBlock
         tool_block = ToolUseBlock(
@@ -472,15 +483,15 @@ class ReActAgent(ASReActAgent):
             name=tc_formatted['name'],
             input=tc_formatted['input']
         )
-        
+
         # Call tool and collect results
         results = []
         gen = await self.toolkit.call_tool_function(tool_block)
-        async for response in gen:
+        for response in gen:
             results.append(response)
-        
+
         return results[0] if len(results) == 1 else results
-    
+
     def _format_tool_result(self, result: Any) -> str:
         """Format tool result for display."""
         if hasattr(result, 'content'):
@@ -495,17 +506,18 @@ class ReActAgent(ASReActAgent):
                 return '\n'.join(texts)
             return str(content)
         return str(result)
-    
+
     async def _add_tool_result_to_memory(self, tool_call: Dict, result: Any):
         """Add tool result to agent's memory."""
         from agentscope.message import Msg, ToolResultBlock
-        
-        tool_name = tool_call.get('name') or tool_call.get('function', {}).get('name', 'unknown')
+
+        tool_name = tool_call.get('name') or tool_call.get(
+            'function', {}).get('name', 'unknown')
         tool_id = tool_call.get('id', 'unknown')
-        
+
         # Format result as string
         result_str = self._format_tool_result(result)
-        
+
         # Create tool result message
         result_msg = Msg(
             name="system",
@@ -519,12 +531,12 @@ class ReActAgent(ASReActAgent):
             ],
             role="system"
         )
-        
+
         await self.memory.add(result_msg)
-    
+
     def _extract_tool_call_from_chunk(self, chunk) -> Optional[Dict]:
         """Extract tool call information from a streaming chunk.
-        
+
         This allows us to detect tool calls during streaming without re-parsing.
         Supports OpenAI streaming format with tool_calls in delta.
         """
@@ -545,7 +557,7 @@ class ReActAgent(ASReActAgent):
                     }
             # Direct tool_calls in dictionary (skip if already checked above)
             return None
-        
+
         # Object with tool_calls attribute (non-dict objects only)
         try:
             if hasattr(chunk, 'tool_calls'):
@@ -561,15 +573,15 @@ class ReActAgent(ASReActAgent):
         except (AttributeError, IndexError, KeyError, TypeError) as e:
             # Silently ignore attribute errors during tool_calls extraction
             pass
-        
+
         return None
-    
+
     def _extract_token_from_chunk(self, chunk) -> str:
         """Extract token text from various streaming chunk formats."""
         # Direct string
         if isinstance(chunk, str):
             return chunk
-        
+
         # Object with content attribute
         if hasattr(chunk, 'content'):
             content = chunk.content
@@ -584,7 +596,7 @@ class ReActAgent(ASReActAgent):
                     elif isinstance(block, dict) and 'text' in block:
                         texts.append(block['text'])
                 return ''.join(texts)
-        
+
         # Dictionary format
         if isinstance(chunk, dict):
             # OpenAI format: choices[0].delta.content
@@ -593,13 +605,13 @@ class ReActAgent(ASReActAgent):
                 return delta.get('content', '')
             # Simple format
             return chunk.get('content', chunk.get('text', ''))
-        
+
         # Msg object
         if hasattr(chunk, 'content'):
             return str(chunk.content)
-        
+
         return ''
-    
+
     def _extract_content(self, reply_msg) -> str:
         """Extract text content from AgentScope message object."""
         if hasattr(reply_msg, 'content'):
@@ -617,7 +629,7 @@ class ReActAgent(ASReActAgent):
             else:
                 return str(reply_msg.content)
         return ""
-    
+
     def _extract_tool_calls(self, reply_msg) -> list:
         """Extract tool calls from AgentScope message object."""
         tool_calls = []
@@ -642,7 +654,7 @@ class ReActAgent(ASReActAgent):
         # Direct string
         if isinstance(chunk, str):
             return chunk
-        
+
         # Object with content attribute (AgentScope format)
         if hasattr(chunk, 'content'):
             content = chunk.content
@@ -657,14 +669,14 @@ class ReActAgent(ASReActAgent):
                     elif isinstance(block, dict) and 'text' in block:
                         texts.append(block['text'])
                 return ''.join(texts)
-        
+
         # Dictionary format (OpenAI streaming)
         if isinstance(chunk, dict):
             if 'choices' in chunk and len(chunk['choices']) > 0:
                 delta = chunk['choices'][0].get('delta', {})
                 return delta.get('content', '')
             return chunk.get('content', chunk.get('text', ''))
-        
+
         return ''
 
     def _extract_tool_calls_from_text(self, text: str) -> list:
@@ -693,9 +705,10 @@ class ReActAgent(ASReActAgent):
     async def execute_tool(self, tool_call: Dict) -> str:
         """Helper to execute a tool and return the observation string."""
         try:
-            name = tool_call.get('function', {}).get('name', tool_call.get('name', 'unknown'))
+            name = tool_call.get('function', {}).get(
+                'name', tool_call.get('name', 'unknown'))
             tool_res = await self.toolkit.call_tool_function(tool_call)
-            
+
             # Normalize observation to string
             if isinstance(tool_res, list):
                 return "".join([str(getattr(r, "content", r)) for r in tool_res])
@@ -714,16 +727,16 @@ class ReActAgent(ASReActAgent):
 
     async def _reasoning(self, tool_choice: str | None = None) -> Msg:
         """Override _reasoning to stream thinking content to frontend.
-        
+
         This method wraps the parent _reasoning and intercepts the streaming
         response to extract and forward thinking content.
         """
         global _thinking_callback
-        
+
         # Import necessary modules from AgentScope
         from agentscope.agent._react_agent import _MemoryMark
         from agentscope.message import ToolResultBlock
-        
+
         # Handle plan notebook hints (from parent implementation)
         if self.plan_notebook:
             # Insert the reasoning hint from the plan notebook
@@ -763,7 +776,7 @@ class ReActAgent(ASReActAgent):
                 if self.model.stream:
                     async for content_chunk in res:
                         msg.content = content_chunk.content
-                        
+
                         # Stream thinking content to frontend if callback is set
                         if _thinking_callback and hasattr(content_chunk, 'content'):
                             for block in content_chunk.content:
@@ -837,5 +850,5 @@ class ReActAgent(ASReActAgent):
                     )
                     await self.memory.add(msg_res)
                     await self.print(msg_res, True)
-            
-            return msg
+
+        return msg

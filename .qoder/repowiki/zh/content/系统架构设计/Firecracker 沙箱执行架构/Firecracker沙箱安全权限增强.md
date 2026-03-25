@@ -487,7 +487,7 @@ A --> K
 
 ```bash
 # 检查沙箱是否运行
-curl http://192.168.126.133:8080/v1/sandbox
+curl http://192.168.126.132:8080/v1/sandbox
 
 # 启动沙箱容器
 docker run --security-opt seccomp=unconfined \

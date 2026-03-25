@@ -15,6 +15,14 @@
 - [README.md](file://README.md)
 </cite>
 
+## 更新摘要
+**变更内容**
+- 更新了ReAct智能体从AgentScope原生流式支持到手动实现的架构变更
+- 新增了THINK-ACT-OBSERVE三阶段流式处理机制的详细说明
+- 增强了内存压缩和工具执行能力的技术细节
+- 改进了思维内容流式传输和错误处理机制
+- 更新了流式处理架构图和组件关系图
+
 ## 目录
 1. [简介](#简介)
 2. [项目结构](#项目结构)
@@ -30,12 +38,14 @@
 
 LocalManus是一个基于AgentScope框架的多智能体AI平台，专注于ReAct（推理与行动）智能体的流式增强实现。该项目通过Server-Sent Events (SSE)技术实现了真正的实时流式响应，为用户提供了流畅的交互体验。
 
+**更新** 项目已从简单的AgentScope原生流式支持升级为完全自定义的手动ReAct循环实现，实现了更精细的流式控制和增强的功能特性。
+
 该项目的核心创新在于：
-- **ReAct智能体流式增强**：通过AgentScope原生API实现完整的ReAct循环流式处理
-- **多轮对话历史管理**：支持会话级别的消息历史同步
-- **思维内容实时传输**：将智能体的思考过程实时传递给前端
-- **工具调用流式执行**：在工具执行过程中提供进度反馈
-- **异步并发处理**：使用asyncio实现高并发的流式处理
+- **手动ReAct循环实现**：完全自定义的THINK-ACT-OBSERVE三阶段流式处理
+- **思维内容实时传输**：通过全局回调机制实现实时思维内容流式传输
+- **增强的工具执行能力**：支持工具调用的实时反馈和结果格式化
+- **智能内存压缩**：基于令牌计数的自动记忆压缩机制
+- **改进的错误处理**：完善的异常捕获和资源清理机制
 
 ## 项目结构
 
@@ -75,18 +85,20 @@ ReAct --> Sandbox
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L33-L524)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L11-L52)
+- [main.py:33-524](file://localmanus-backend/main.py#L33-L524)
+- [agent_manager.py:11-52](file://localmanus-backend/core/agent_manager.py#L11-L52)
 
 **章节来源**
-- [README.md](file://README.md#L1-L312)
-- [main.py](file://localmanus-backend/main.py#L1-L524)
+- [README.md:1-312](file://README.md#L1-L312)
+- [main.py:1-524](file://localmanus-backend/main.py#L1-L524)
 
 ## 核心组件
 
 ### ReAct智能体系统
 
-ReAct智能体是整个系统的核心，负责推理和行动的协调执行。它基于AgentScope框架，实现了完整的ReAct循环：
+**更新** ReAct智能体已从AgentScope原生实现升级为完全自定义的手动实现，提供了更精细的流式控制和增强的功能特性。
+
+ReAct智能体是整个系统的核心，负责推理和行动的协调执行。它基于AgentScope框架，实现了完整的手动ReAct循环：
 
 ```mermaid
 classDiagram
@@ -96,6 +108,10 @@ class ReActAgent {
 +_extract_content(reply_msg) str
 +execute_tool(tool_call) str
 +set_thinking_callback(callback) void
++_stream_reasoning() Msg
++_execute_tool(tool_call) Any
++_add_tool_result_to_memory(tool_call, result) void
++run_with_context(user_input, user_context) AsyncGenerator
 }
 class UserContextToolkit {
 +call_tool_function(tool_block) AsyncGenerator
@@ -105,6 +121,7 @@ class UserContextToolkit {
 class SkillManager {
 +toolkit UserContextToolkit
 +set_user_context(user_context) void
++clear_user_context() void
 +execute_tool(tool_name, kwargs) Any
 +get_skills_prompt() Optional[str]
 }
@@ -120,13 +137,15 @@ Orchestrator --> SkillManager : "管理"
 ```
 
 **图表来源**
-- [react_agent.py](file://localmanus-backend/agents/react_agent.py#L32-L490)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L98-L236)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L12-L216)
+- [react_agent.py:133-842](file://localmanus-backend/agents/react_agent.py#L133-L842)
+- [skill_manager.py:98-236](file://localmanus-backend/core/skill_manager.py#L98-L236)
+- [orchestrator.py:12-216](file://localmanus-backend/core/orchestrator.py#L12-L216)
 
 ### 流式处理架构
 
-系统采用异步流式处理架构，确保实时响应：
+**更新** 新增了THINK-ACT-OBSERVE三阶段流式处理机制，实现了更精细的流式控制和实时反馈。
+
+系统采用异步流式处理架构，确保实时响应，并实现了完整的三阶段流式处理：
 
 ```mermaid
 sequenceDiagram
@@ -140,12 +159,14 @@ Client->>API : SSE请求
 API->>Orchestrator : chat_stream()
 Orchestrator->>ReAct : run_stream()
 loop 流式响应
-ReAct->>ReAct : 推理思考
+ReAct->>ReAct : THINK阶段 - 推理思考
 ReAct->>Client : 思维内容流
-ReAct->>Skill : 工具调用
+ReAct->>Skill : ACT阶段 - 工具调用
 Skill->>Sandbox : 执行操作
 Sandbox->>Skill : 返回结果
 Skill->>ReAct : 观察结果
+ReAct->>Client : 工具执行结果
+ReAct->>ReAct : OBSERVE阶段 - 继续循环
 ReAct->>Client : 内容块流
 end
 ReAct->>Orchestrator : 同步事件
@@ -154,18 +175,20 @@ ReAct->>Client : [DONE]
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L391-L424)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L17-L162)
-- [react_agent.py](file://localmanus-backend/agents/react_agent.py#L65-L172)
+- [main.py:391-424](file://localmanus-backend/main.py#L391-L424)
+- [orchestrator.py:17-162](file://localmanus-backend/core/orchestrator.py#L17-L162)
+- [react_agent.py:250-365](file://localmanus-backend/agents/react_agent.py#L250-L365)
 
 **章节来源**
-- [react_agent.py](file://localmanus-backend/agents/react_agent.py#L1-L490)
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L1-L216)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L1-L236)
+- [react_agent.py:1-842](file://localmanus-backend/agents/react_agent.py#L1-L842)
+- [orchestrator.py:1-216](file://localmanus-backend/core/orchestrator.py#L1-L216)
+- [skill_manager.py:1-236](file://localmanus-backend/core/skill_manager.py#L1-L236)
 
 ## 架构概览
 
 ### 整体系统架构
+
+**更新** 系统架构已从单一的AgentScope原生实现演进为多层协作架构，包含手动ReAct循环和智能思维内容流式传输。
 
 LocalManus采用分层架构设计，每层都有明确的职责分工：
 
@@ -216,13 +239,15 @@ FastAPI --> Storage
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L33-L524)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L11-L52)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L98-L236)
+- [main.py:33-524](file://localmanus-backend/main.py#L33-L524)
+- [agent_manager.py:11-52](file://localmanus-backend/core/agent_manager.py#L11-L52)
+- [skill_manager.py:98-236](file://localmanus-backend/core/skill_manager.py#L98-L236)
 
 ### 数据流架构
 
-系统内部的数据流遵循严格的协议规范：
+**更新** 新增了思维内容流式传输和工具执行结果的详细数据流处理。
+
+系统内部的数据流遵循严格的协议规范，包含思维内容的实时传输：
 
 ```mermaid
 flowchart TD
@@ -251,17 +276,19 @@ ReturnError --> End
 ```
 
 **图表来源**
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L17-L162)
+- [orchestrator.py:17-162](file://localmanus-backend/core/orchestrator.py#L17-L162)
 
 **章节来源**
-- [main.py](file://localmanus-backend/main.py#L391-L424)
-- [prompts.py](file://localmanus-backend/core/prompts.py#L54-L75)
+- [main.py:391-424](file://localmanus-backend/main.py#L391-L424)
+- [prompts.py:54-75](file://localmanus-backend/core/prompts.py#L54-L75)
 
 ## 详细组件分析
 
 ### ReAct智能体实现
 
-ReAct智能体是系统的核心组件，实现了完整的推理-行动循环：
+**更新** ReAct智能体已完全重写，实现了手动的THINK-ACT-OBSERVE三阶段流式处理循环。
+
+ReAct智能体是系统的核心组件，实现了完整的推理-行动循环，包含三个阶段的流式处理：
 
 #### 核心方法分析
 
@@ -274,6 +301,7 @@ class ReActAgent {
 +_extract_content(reply_msg) str
 +execute_tool(tool_call) str
 +_reasoning(tool_choice) Msg
++run_with_context(user_input, user_context) AsyncGenerator
 }
 class UserContextToolkit {
 +call_tool_function(tool_block) AsyncGenerator~ToolResponse~
@@ -291,10 +319,16 @@ UserContextToolkit --> SkillManager : "依赖"
 ```
 
 **图表来源**
-- [react_agent.py](file://localmanus-backend/agents/react_agent.py#L32-L490)
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L17-L88)
+- [react_agent.py:133-842](file://localmanus-backend/agents/react_agent.py#L133-L842)
+- [skill_manager.py:17-88](file://localmanus-backend/core/skill_manager.py#L17-L88)
 
 #### 流式处理机制
+
+**更新** 新增了THINK-ACT-OBSERVE三阶段流式处理机制，每个阶段都有特定的流式输出：
+
+1. **THINK阶段**：实时流式传输推理思考内容
+2. **ACT阶段**：工具调用的实时反馈和执行状态
+3. **OBSERVE阶段**：工具结果的观察和下一轮循环
 
 ReAct智能体采用异步生成器模式实现流式处理：
 
@@ -305,11 +339,13 @@ ReAct智能体采用异步生成器模式实现流式处理：
 5. **工具调用检测**：实时检测并报告工具调用
 
 **章节来源**
-- [react_agent.py](file://localmanus-backend/agents/react_agent.py#L65-L172)
+- [react_agent.py:250-365](file://localmanus-backend/agents/react_agent.py#L250-L365)
 
 ### 协调器系统
 
-协调器负责管理多个智能体之间的协作和会话状态：
+**更新** 协调器系统已增强了思维内容收集和工具执行结果的并发处理能力。
+
+协调器负责管理多个智能体之间的协作和会话状态，实现了复杂的思维内容收集机制：
 
 #### 会话管理
 
@@ -326,9 +362,11 @@ StreamResponse --> Cleanup["清理资源"]
 ```
 
 **图表来源**
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L31-L40)
+- [orchestrator.py:31-40](file://localmanus-backend/core/orchestrator.py#L31-L40)
 
 #### 思维内容收集
+
+**更新** 新增了专门的思维内容收集机制，支持实时思维内容的流式传输：
 
 协调器实现了复杂的思维内容收集机制：
 
@@ -336,13 +374,16 @@ StreamResponse --> Cleanup["清理资源"]
 2. **并发处理**：同时处理思维内容收集和内容流传输
 3. **缓冲区管理**：使用锁机制保护共享缓冲区
 4. **超时处理**：防止无限等待
+5. **实时传输**：通过全局回调机制实现实时思维内容流式传输
 
 **章节来源**
-- [orchestrator.py](file://localmanus-backend/core/orchestrator.py#L45-L162)
+- [orchestrator.py:45-162](file://localmanus-backend/core/orchestrator.py#L45-L162)
 
 ### 技能管理系统
 
-技能管理系统提供了灵活的工具注册和执行机制：
+**更新** 技能管理系统已增强了用户上下文注入和工具执行的异步处理能力。
+
+技能管理系统提供了灵活的工具注册和执行机制，支持用户上下文的异步安全注入：
 
 #### 用户上下文注入
 
@@ -362,21 +403,26 @@ SkillManager->>Client : 返回工具结果
 ```
 
 **图表来源**
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L23-L87)
+- [skill_manager.py:23-87](file://localmanus-backend/core/skill_manager.py#L23-L87)
 
 #### 动态技能加载
+
+**更新** 新增了ContextVar机制确保异步安全的用户上下文隔离：
 
 系统支持动态技能加载，包括：
 - **Agent技能**：目录形式的复杂技能
 - **工具函数**：单个Python函数
 - **自动注册**：启动时自动扫描和注册
+- **异步安全**：使用ContextVar确保并发请求的上下文隔离
 
 **章节来源**
-- [skill_manager.py](file://localmanus-backend/core/skill_manager.py#L109-L169)
+- [skill_manager.py:109-169](file://localmanus-backend/core/skill_manager.py#L109-L169)
 
 ### API接口设计
 
-系统提供了丰富的REST API接口：
+**更新** API接口设计已增强了思维内容流式传输和工具执行结果的处理能力。
+
+系统提供了丰富的REST API接口，支持完整的流式处理：
 
 #### SSE聊天接口
 
@@ -393,23 +439,27 @@ Orchestrator->>ReAct : run_stream()
 loop 流式响应
 ReAct->>API : data : {"content" : "..."}
 API->>Client : 推送内容块
+ReAct->>API : data : {"thinking" : "..."}
+API->>Client : 推送思维内容
 end
 API->>Client : data : [DONE]
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L391-L424)
+- [main.py:391-424](file://localmanus-backend/main.py#L391-L424)
 
 #### WebSocket接口
 
 系统还提供了WebSocket接口用于实时任务监控：
 
 **章节来源**
-- [main.py](file://localmanus-backend/main.py#L444-L477)
+- [main.py:444-477](file://localmanus-backend/main.py#L444-L477)
 
 ## 依赖关系分析
 
 ### 外部依赖
+
+**更新** 外部依赖关系已更新，反映了新的手动ReAct实现架构。
 
 系统依赖于多个关键的外部库：
 
@@ -450,10 +500,12 @@ Toolkit --> Requests
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L1-L26)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L1-L10)
+- [main.py:1-26](file://localmanus-backend/main.py#L1-L26)
+- [agent_manager.py:1-10](file://localmanus-backend/core/agent_manager.py#L1-L10)
 
 ### 内部模块依赖
+
+**更新** 内部模块依赖关系已反映新的手动实现架构。
 
 ```mermaid
 graph TD
@@ -468,16 +520,18 @@ SkillManager --> UserContextToolkit[core/skill_manager.py]
 ```
 
 **图表来源**
-- [main.py](file://localmanus-backend/main.py#L5-L16)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L6-L9)
+- [main.py:5-16](file://localmanus-backend/main.py#L5-L16)
+- [agent_manager.py:6-9](file://localmanus-backend/core/agent_manager.py#L6-L9)
 
 **章节来源**
-- [main.py](file://localmanus-backend/main.py#L1-L26)
-- [agent_manager.py](file://localmanus-backend/core/agent_manager.py#L1-L52)
+- [main.py:1-26](file://localmanus-backend/main.py#L1-L26)
+- [agent_manager.py:1-52](file://localmanus-backend/core/agent_manager.py#L1-L52)
 
 ## 性能考虑
 
 ### 流式处理优化
+
+**更新** 性能优化已增强，包含了新的内存压缩和思维内容流式传输机制。
 
 系统在性能方面采用了多项优化策略：
 
@@ -485,8 +539,12 @@ SkillManager --> UserContextToolkit[core/skill_manager.py]
 2. **内存管理**：及时清理异步任务和队列资源
 3. **内容分块**：将长内容分割为小块传输，减少内存占用
 4. **并发控制**：合理控制并发任务数量，避免资源争用
+5. **智能压缩**：基于令牌计数的自动记忆压缩机制
+6. **思维内容缓存**：实时思维内容的高效缓存和传输
 
 ### 缓存策略
+
+**更新** 新增了智能内存压缩和思维内容缓存策略。
 
 ```mermaid
 flowchart TD
@@ -502,16 +560,22 @@ ReturnContent --> End
 
 ### 错误处理机制
 
+**更新** 错误处理机制已增强，包含了思维内容流式传输和工具执行的完整异常处理。
+
 系统实现了完善的错误处理机制：
 
 1. **异常捕获**：在关键位置捕获和处理异常
 2. **资源清理**：确保异步任务和连接得到正确清理
 3. **降级策略**：在网络或服务不可用时提供降级响应
 4. **日志记录**：详细记录错误信息便于调试
+5. **思维内容恢复**：确保思维内容流式传输的完整性
+6. **工具执行回滚**：工具执行失败时的自动回滚机制
 
 ## 故障排除指南
 
 ### 常见问题诊断
+
+**更新** 故障排除指南已更新，包含了新的思维内容流式传输和工具执行相关的诊断方法。
 
 #### SSE连接问题
 
@@ -538,12 +602,32 @@ ReturnContent --> End
 2. 工具调用执行时间长
 3. 网络延迟
 4. 并发任务过多
+5. 思维内容流式传输阻塞
 
 **解决方案**：
 1. 优化模型配置和参数
 2. 实现工具调用的超时机制
 3. 检查网络连接质量
 4. 调整并发限制
+5. 优化思维内容流式传输性能
+
+#### 思维内容传输问题
+
+**更新** 新增了专门的思维内容传输问题诊断：
+
+**症状**：思维内容无法实时传输到前端
+
+**可能原因**：
+1. 全局回调函数未正确设置
+2. 思维内容队列阻塞
+3. 异步任务取消
+4. 缓冲区锁定问题
+
+**解决方案**：
+1. 检查set_thinking_callback函数调用
+2. 验证思维内容队列的异步处理
+3. 确保异步任务的正确生命周期管理
+4. 检查缓冲区锁的获取和释放
 
 #### 技能执行失败
 
@@ -554,17 +638,21 @@ ReturnContent --> End
 2. 用户上下文缺失
 3. 权限不足
 4. 外部服务不可用
+5. 异步执行超时
 
 **解决方案**：
 1. 检查技能注册日志
 2. 验证用户上下文设置
 3. 确认权限配置
 4. 检查外部服务状态
+5. 实现工具执行的超时和重试机制
 
 **章节来源**
-- [test_chat_sse.py](file://localmanus-backend/test_chat_sse.py#L30-L115)
+- [test_chat_sse.py:30-115](file://localmanus-backend/test_chat_sse.py#L30-L115)
 
 ### 调试工具
+
+**更新** 调试工具已增强，包含了新的思维内容流式传输和工具执行结果的调试功能。
 
 系统提供了多种调试工具：
 
@@ -577,54 +665,71 @@ TestSuite --> WebScraping[网页抓取测试]
 TestSuite --> FileOps[文件操作测试]
 TestSuite --> SystemExec[系统执行测试]
 TestSuite --> MultiTurn[多轮对话测试]
+TestSuite --> ThinkingStream[思维内容流式测试]
+TestSuite --> ToolExecution[工具执行测试]
 WebSearch --> Bing[Bing搜索]
 WebSearch --> Google[Google搜索]
 WebSearch --> DuckDuckGo[DuckDuckGo搜索]
 WebSearch --> Baidu[Baidu搜索]
 MultiTurn --> LongConversation[长对话测试]
 MultiTurn --> ErrorHandling[错误处理测试]
+ThinkingStream --> RealtimeThinking[实时思维传输]
+ToolExecution --> ToolResult[工具结果格式化]
 ```
 
 **图表来源**
-- [test_chat_sse.py](file://localmanus-backend/test_chat_sse.py#L411-L466)
+- [test_chat_sse.py:411-466](file://localmanus-backend/test_chat_sse.py#L411-L466)
 
 #### 日志分析
+
+**更新** 日志分析已增强，包含了新的思维内容流式传输和内存压缩的日志记录。
 
 系统使用结构化日志记录所有关键操作：
 
 1. **请求日志**：记录所有API请求的详细信息
 2. **智能体日志**：跟踪ReAct智能体的推理过程
-3. **技能日志**：记录工具调用的执行情况
-4. **错误日志**：捕获和记录所有异常情况
+3. **思维内容日志**：记录实时思维内容传输状态
+4. **技能日志**：记录工具调用的执行情况
+5. **内存压缩日志**：记录智能内存压缩的触发和效果
+6. **错误日志**：捕获和记录所有异常情况
 
 **章节来源**
-- [test_chat_sse.py](file://localmanus-backend/test_chat_sse.py#L1-L509)
+- [test_chat_sse.py:1-509](file://localmanus-backend/test_chat_sse.py#L1-L509)
 
 ## 结论
+
+**更新** 结论部分已更新，反映了从AgentScope原生流式支持到手动实现的重大架构变更。
 
 LocalManus的ReAct智能体流式增强项目展示了现代AI应用的最佳实践。通过精心设计的架构和实现，系统成功地解决了传统AI应用中的延迟和用户体验问题。
 
 ### 主要成就
 
-1. **实时流式响应**：通过SSE技术实现了真正的实时交互
-2. **智能体协作**：多智能体系统的有效协调和管理
-3. **可扩展性**：模块化的架构设计支持功能扩展
-4. **安全性**：沙箱环境和权限控制确保系统安全
+1. **手动ReAct循环实现**：完全自定义的THINK-ACT-OBSERVE三阶段流式处理
+2. **实时思维内容传输**：通过全局回调机制实现思维内容的实时流式传输
+3. **智能内存压缩**：基于令牌计数的自动记忆压缩机制
+4. **增强的工具执行能力**：支持工具调用的实时反馈和结果格式化
+5. **异步安全的用户上下文**：使用ContextVar确保并发请求的上下文隔离
 
 ### 技术亮点
 
-- **异步流式处理**：使用asyncio实现高效的并发处理
-- **思维内容可视化**：实时展示AI的思考过程
-- **工具调用集成**：无缝集成各种外部工具和服务
-- **会话状态管理**：支持多轮对话的历史记录
+- **手动流式控制**：完全自定义的流式处理循环，提供精确的控制
+- **三阶段流式处理**：THINK-ACT-OBSERVE三个阶段的精细化流式控制
+- **思维内容可视化**：实时展示AI的思考过程，提升用户体验
+- **智能内存管理**：自动内存压缩和优化，提高系统性能
+- **异步安全机制**：ContextVar确保并发环境下的数据隔离
+- **完整的错误处理**：覆盖思维内容传输和工具执行的完整异常处理
 
 ### 未来发展
 
+**更新** 未来发展计划已更新，包含了新的技术发展方向。
+
 该项目为AI应用的流式增强提供了优秀的参考模型，未来可以在以下方面进一步发展：
 
-1. **性能优化**：进一步优化流式处理的性能
-2. **功能扩展**：增加更多类型的智能体和技能
-3. **用户体验**：改进前端界面和交互设计
-4. **部署优化**：简化部署流程和配置管理
+1. **性能优化**：进一步优化手动ReAct循环的性能和思维内容传输效率
+2. **功能扩展**：增加更多类型的智能体和技能，支持更复杂的任务场景
+3. **用户体验**：改进前端界面和交互设计，提供更好的可视化反馈
+4. **部署优化**：简化部署流程和配置管理，支持更灵活的部署方式
+5. **智能压缩算法**：开发更先进的内存压缩算法，提高压缩效率
+6. **思维内容分析**：实现思维内容的深度分析和学习，提升智能体能力
 
-通过持续的改进和优化，LocalManus将成为一个功能完整、性能优异的AI智能体平台。
+通过持续的改进和优化，LocalManus将成为一个功能完整、性能优异的AI智能体平台，为用户提供更加流畅和智能的交互体验。

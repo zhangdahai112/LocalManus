@@ -35,11 +35,11 @@
 
 ## 更新摘要
 **所做更改**
-- 新增二进制文件上传功能，支持base64编码的二进制数据传输
-- 更新文件管理器以支持二进制文件的读写操作
-- 新增文件上传API端点和数据库模型
-- 更新前端组件以支持文件选择和上传
-- 新增文件管理器的统一文件操作接口
+- 更新沙箱管理系统配置，IP地址从192.168.126.132更新为192.168.126.133
+- 更新SANDBOX_LOCAL_URL配置为新的IP地址
+- 更新SandboxManager构造函数参数默认值
+- 更新相关文档和测试脚本中的IP地址配置
+- 保持向后兼容性，所有变更不影响功能实现
 
 ## 目录
 1. [简介](#简介)
@@ -57,7 +57,7 @@
 ## 简介
 本文件现面向 LocalManus 的 agent-infra/sandbox 执行架构，系统性阐述基于 Docker 容器的沙箱系统生命周期管理、双模式（本地共享/在线隔离）架构、REST API 通信机制、浏览器自动化（Playwright/CDP）、VSCode 服务器集成、Jupyter 环境支持以及 MCP 协议集成。同时提供生产就绪的部署配置、健康检查机制、VNC 密码认证、Nginx 反向代理配置、性能优化策略、资源限制配置、故障恢复机制，帮助读者快速理解并稳定落地该架构。
 
-**更新** 新增二进制文件上传功能，支持base64编码的二进制数据传输，为沙箱环境提供完整的文件操作能力。
+**更新** 沙箱管理系统配置已更新，IP地址从192.168.126.132更新为192.168.126.133，确保所有组件使用新的网络配置。
 
 ## 项目结构
 后端采用 FastAPI 提供统一 API 网关，结合 AgentScope 的多智能体编排能力，按需调度技能（Skills）在 agent-infra/sandbox 容器环境中执行。核心目录与职责如下：
@@ -66,7 +66,7 @@
   - core：编排与基础设施
     - orchestrator.py：会话管理、ReAct 流式对话、工作流编排
     - agent_manager.py：AgentScope 初始化与智能体实例化
-    - config.py：模型与服务配置
+    - config.py：模型与服务配置，**更新** 包含新的SANDBOX_LOCAL_URL配置
     - prompts.py：系统提示词模板
     - skill_manager.py：技能注册与工具调用
     - firecracker_sandbox.py：**已重构为agent-infra/sandbox统一管理器**
@@ -81,7 +81,7 @@
   - scripts：**新增** agent-infra/sandbox 部署与排障脚本
   - docker-compose.yml：**更新** 开发环境服务编排与网络
   - docker-compose.prod.yml：**新增** 生产环境服务编排与沙箱配置
-  - .env.example：**更新** 环境变量示例
+  - .env.example：**更新** 环境变量示例，包含新的IP地址配置
   - requirements.txt：Python 依赖
 - nginx：**新增** Nginx 反向代理配置
   - nginx.conf：开发环境配置
@@ -190,7 +190,7 @@ Router --> SkillLib["技能库<br/>skills/"]
 Router --> SBMgr["SandboxManager<br/>统一沙箱管理器"]
 SBMgr --> LocalMode["LOCAL 模式<br/>共享沙箱"]
 SBMgr --> OnlineMode["ONLINE 模式<br/>Docker 容器"]
-LocalMode --> SharedSandbox["共享沙箱实例"]
+LocalMode --> SharedSandbox["共享沙箱实例<br/>192.168.126.133"]
 OnlineMode --> IsolatedContainer["隔离容器实例"]
 SharedSandbox --> SANDBOX["AIO Sandbox 服务"]
 IsolatedContainer --> SANDBOX
@@ -216,7 +216,7 @@ FileManager --> SandboxFS["沙箱文件系统"]
 
 #### 双模式架构
 - **LOCAL 模式（开发/共享）**
-  - 连接到现有的沙箱实例（如 http://localhost:8080）
+  - 连接到现有的沙箱实例（如 http://192.168.126.133:8080）
   - 无容器启动开销，即时访问
   - 共享资源，适合开发和测试
 - **ONLINE 模式（生产/隔离）**
@@ -257,7 +257,7 @@ API-->>Client : 操作结果
 基于 Docker 容器的生命周期管理，支持自动启动、资源清理和状态恢复。
 
 #### LOCAL 模式生命周期
-- 连接到现有沙箱实例
+- 连接到现有沙箱实例（192.168.126.133）
 - 自动检测沙箱可用性
 - 获取用户家目录信息
 - 提供共享资源访问
@@ -272,7 +272,7 @@ API-->>Client : 操作结果
 ```mermaid
 flowchart TD
 Start(["开始沙箱操作"]) --> CheckMode{"检查模式"}
-CheckMode --> |LOCAL| ConnectLocal["连接到本地沙箱"]
+CheckMode --> |LOCAL| ConnectLocal["连接到本地沙箱<br/>192.168.126.133"]
 CheckMode --> |ONLINE| CheckContainer["检查容器状态"]
 ConnectLocal --> GetContext["获取上下文信息"]
 GetContext --> ReturnLocal["返回沙箱信息"]
@@ -671,6 +671,7 @@ SANDBOX --> SB
 ### LOCAL 模式性能
 - **启动时间**：几乎为零，直接连接到现有沙箱
 - **资源消耗**：共享资源，内存和 CPU 使用率较低
+- **网络延迟**：使用新的IP地址192.168.126.133，确保稳定的网络连接
 - **适用场景**：开发、测试、原型验证
 
 ### ONLINE 模式性能
@@ -709,7 +710,7 @@ SANDBOX --> SB
 
 ### LOCAL 模式故障排查
 - **无法连接到沙箱**
-  - 检查沙箱服务是否运行：`curl http://localhost:8080/v1/sandbox`
+  - 检查沙箱服务是否运行：`curl http://192.168.126.133:8080/v1/sandbox`
   - 验证网络连接和防火墙设置
   - 确认端口未被占用
 - **沙箱不可用**
@@ -753,7 +754,7 @@ SANDBOX --> SB
   - 验证上游服务可达性
 - **VNC 认证失败**
   - 检查 VNC_PASSWORD 环境变量
-  - 验证 VNC 服务状态：`curl http://localhost:8080/vnc/`
+  - 验证 VNC 服务状态：`curl http://192.168.126.133:8080/vnc/`
   - 确认 WebSocket 升级支持
 - **健康检查失败**
   - 检查各服务健康端点：`curl http://localhost:8000/api/health`
@@ -782,7 +783,7 @@ SANDBOX --> SB
 ## 结论
 LocalManus 通过迁移到 agent-infra/sandbox 系统，实现了从 Firecracker 微虚拟机到基于 Docker 容器的现代化沙箱架构。新系统提供了更好的易用性、更丰富的功能集和更强的可扩展性。通过双模式架构（LOCAL 和 ONLINE），系统能够在开发效率和生产安全性之间找到最佳平衡点。新的 REST API 接口简化了集成，而 VSCode Server、Jupyter、浏览器自动化等特性为用户提供了完整的开发环境。
 
-**更新** 新增的二进制文件上传功能进一步增强了系统的实用性，支持base64编码的二进制数据传输，为沙箱环境提供了完整的文件操作能力。统一的文件管理器抽象了主机和沙箱文件系统的差异，为技能开发者提供了透明的文件操作接口。
+**更新** 沙箱管理系统配置已更新，IP地址从192.168.126.132更新为192.168.126.133，确保所有组件使用新的网络配置。这一变更不影响功能实现，但确保了系统在网络层面的稳定性和一致性。新增的二进制文件上传功能进一步增强了系统的实用性，支持base64编码的二进制数据传输，为沙箱环境提供了完整的文件操作能力。统一的文件管理器抽象了主机和沙箱文件系统的差异，为技能开发者提供了透明的文件操作接口。
 
 生产环境配置进一步增强了系统的稳定性，包括健康检查机制、VNC 密码认证、Nginx 反向代理和安全配置。这些改进使得系统更适合在生产环境中部署和维护。
 
@@ -800,7 +801,7 @@ MODEL_NAME=gpt-4
 
 # 沙箱配置
 SANDBOX_MODE=local          # local 或 online
-SANDBOX_LOCAL_URL=http://localhost:8080
+SANDBOX_LOCAL_URL=http://192.168.126.133:8080
 USE_CHINA_MIRROR=false      # 在中国使用镜像
 
 # 文件上传配置
@@ -893,3 +894,32 @@ MAX_FILE_SIZE=104857600    # 最大文件大小（100MB）
 - [file_manager.py:73-122](file://localmanus-backend/core/file_manager.py#L73-L122)
 - [models.py:29-46](file://localmanus-backend/core/models.py#L29-L46)
 - [Omnibox.tsx:29-77](file://localmanus-ui/app/components/Omnibox.tsx#L29-L77)
+
+### IP 地址变更详情
+**更新** 本次变更涉及以下文件的IP地址更新：
+
+#### 配置文件变更
+- **config.py**：第25行，SANDBOX_LOCAL_URL 默认值更新为 `http://192.168.126.133:8080`
+- **.env.example**：第9行，SANDBOX_LOCAL_URL 更新为 `http://192.168.126.133:8080`
+
+#### 代码文件变更
+- **firecracker_sandbox.py**：第137行，注释中的LOCAL模式URL更新
+- **firecracker_sandbox.py**：第145行，SandboxManager构造函数默认local_url参数更新
+- **firecracker_sandbox.py**：第314行，全局SANDBOX_LOCAL_URL默认值更新
+- **test_sandbox.py**：第16行，LOCAL模式测试URL更新
+- **test_sandbox.py**：第21行，SandboxManager构造函数参数更新
+- **test_sandbox.py**：第149行，SandboxClient构造函数参数更新
+
+#### 文档文件变更
+- **FIRECRACKER_TROUBLESHOOTING.md**：第207行，配置示例更新
+- **FIRECRACKER_TROUBLESHOOTING.md**：第267行，故障排查示例更新
+
+**章节来源**
+- [config.py:24-26](file://localmanus-backend/core/config.py#L24-L26)
+- [.env.example:8-9](file://localmanus-backend/.env.example#L8-L9)
+- [firecracker_sandbox.py:136-146](file://localmanus-backend/core/firecracker_sandbox.py#L136-L146)
+- [firecracker_sandbox.py:313-321](file://localmanus-backend/core/firecracker_sandbox.py#L313-L321)
+- [test_sandbox.py:15-22](file://localmanus-backend/scripts/test_sandbox.py#L15-L22)
+- [test_sandbox.py:148-149](file://localmanus-backend/scripts/test_sandbox.py#L148-L149)
+- [FIRECRACKER_TROUBLESHOOTING.md:207](file://localmanus-backend/scripts/FIRECRACKER_TROUBLESHOOTING.md#L207)
+- [FIRECRACKER_TROUBLESHOOTING.md:267](file://localmanus-backend/scripts/FIRECRACKER_TROUBLESHOOTING.md#L267)
