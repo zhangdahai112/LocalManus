@@ -33,7 +33,7 @@ class SandboxClient:
     Client for interacting with agent-infra/sandbox API.
     Supports both local connection and online Docker mode.
     """
-    def __init__(self, base_url: str, timeout: int = 30):
+    def __init__(self, base_url: str = "http://192.168.126.133:8080", timeout: int = 30):
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.session = requests.Session()

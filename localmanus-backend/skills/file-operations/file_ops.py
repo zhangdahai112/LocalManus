@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 from core.skill_manager import BaseSkill
 from core.firecracker_sandbox import sandbox_manager
+from core.firecracker_sandbox import SandboxClient
 from agentscope.tool import ToolResponse
 from agentscope.message import TextBlock
 
@@ -18,9 +19,9 @@ class FileOperationSkill(BaseSkill):
 
     def _get_user_dir(self, user_id: Optional[int] = None) -> Path:
         """Get user-specific upload directory"""
-        if user_id:
-            return self.upload_base_dir / str(user_id)
-        return Path(".")
+        # if user_id:
+        #     return self.upload_base_dir / str(user_id)
+        return Path("/home/gem")
 
     def list_user_files(self, user_id: int) -> ToolResponse:
         """Lists all files uploaded by a specific user.
@@ -117,6 +118,23 @@ class FileOperationSkill(BaseSkill):
         except Exception as e:
             return ToolResponse(content=[TextBlock(type="text", text=f"Error reading file: {str(e)}")])
 
+    def view_file(self, file_path: str, user_id: Optional[str] = None) -> ToolResponse:
+        """Browse the content of a file inside the user's sandboxw with playwright.
+
+        Args:
+            file_path (str): Path to the file to read inside the sandbox
+            user_id (str, optional): User ID to scope the operation to their sandbox
+
+        Returns:
+            ToolResponse: Content of the file or error message
+        """
+        try:
+            client = SandboxClient()
+            response = client.browser_navigate(f"file:///{file_path}")
+            return ToolResponse(content=[TextBlock(type="text", text=response.text)])
+        except Exception as e:
+            return ToolResponse(content=[TextBlock(type="text", text=f"Error reading file: {str(e)}")])
+
     def file_write(self, file_path: str, content: str, user_id: Optional[str] = None) -> ToolResponse:
         """Writes content to a file inside the user's sandbox.
 
@@ -180,7 +198,11 @@ class FileOps(BaseSkill):
     def read_file(self, file_path: str, user_id: Optional[str] = None) -> ToolResponse:
         """Reads the content of a file."""
         return self.file_operation_skill.file_read(file_path, user_id)
-
+    
+    def view_file(self, file_path: str, user_id: Optional[str] = None) -> ToolResponse:
+        """Reads the content of a file with playwright browser. include text 、image、etc"""
+        return self.file_operation_skill.view_file(file_path, user_id)
+    
     def write_file(self, file_path: str, content: str, user_id: Optional[str] = None) -> ToolResponse:
         """Writes content to a file."""
         return self.file_operation_skill.file_write(file_path, content, user_id)
